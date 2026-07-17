@@ -1,0 +1,34 @@
+data:
+  path: data/processed/shu_mi.h5
+  batch_size: 64
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+
+model:
+  name: eegsimpleconv
+  num_channels: 32
+  num_classes: 2
+  sampling_rate: 200
+  window_seconds: 4.0
+  pretrained: false
+  classifier: avg_pool
+  freeze_backbone: false
+  kwargs:
+    feature_maps: 128
+    num_blocks: 2
+    resampling_rate: 80
+    kernel_size: 8
+
+training:
+  epochs: 50
+  lr: 0.001
+  head_lr: null
+  weight_decay: 0.0001
+  label_smoothing: 0.0
+  grad_clip_norm: 1.0
+  patience: 10
+  seed: 3407
+  amp: true
+  output_dir: outputs/eegsimpleconv_seed3407
+  device: auto

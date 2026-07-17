@@ -1,0 +1,33 @@
+data:
+  path: data/processed/shu_mi.h5
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+
+model:
+  name: cbramod
+  num_channels: 32
+  num_classes: 2
+  sampling_rate: 200
+  window_seconds: 4.0
+  pretrained: true
+  checkpoint_repo: weighting666/CBraMod
+  checkpoint_filename: pretrained_weights.pth
+  classifier: all_patch_reps
+  freeze_backbone: false
+  kwargs:
+    dropout: 0.1
+
+training:
+  epochs: 50
+  lr: 0.0001
+  head_lr: 0.001
+  weight_decay: 0.05
+  label_smoothing: 0.0
+  grad_clip_norm: 1.0
+  patience: 10
+  seed: 3407
+  amp: true
+  output_dir: outputs/cbramod_seed3407
+  device: auto

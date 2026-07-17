@@ -1,0 +1,65 @@
+[project]
+name = "cbramod-experiments"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+
+dependencies = [
+    "torch",
+    "torchvision",
+    "transformers",
+    "flash-attn-3",
+    "huggingface",
+    "datasets",
+    "accelerate",
+    "deepspeed",
+    "numpy",
+    "pandas",
+    "scipy",
+    "requests",
+    "ipykernel",
+    "jupyterlab",
+    "loguru",
+    "ipywidgets",
+    "matplotlib",
+    "wandb",
+    "pre-commit",
+    "einops",
+    "h5py",
+    "lmdb",
+    "mne",
+    "ptflops",
+    "pyEDFlib",
+    "scikit_learn",
+    "torchinfo",
+    "tqdm",
+    "umap_learn",
+    "llvmlite>=0.44.0",
+    "numba>=0.61.0",
+    "pytest>=9.1.1",
+    "ruff>=0.15.22",
+    "pyright>=1.1.411",
+    "torchaudio>=2.11.0",
+]
+
+[tool.uv.sources]
+torch = {index = "pytorch-cu130", marker = "sys_platform == 'linux'"}
+torchvision = {index = "pytorch-cu130", marker = "sys_platform == 'linux'"}
+torchaudio = {index = "pytorch-cu130", marker = "sys_platform == 'linux'"}
+flash-attn-3 = { url = "https://github.com/windreamer/flash-attention3-wheels/releases/download/2026.07.06-0dc6f58/flash_attn_3-3.0.0+20260706.cu130torch2121cxx11abitrue.002cce-cp310-abi3-linux_x86_64.whl" }
+
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+
+
+[tool.setuptools.packages.find]
+    where = ["."] # Search in the current directory
+    include = ["cbramod_experiments"] # Include packages starting with these names
+
+# Configuration for uv
+[tool.uv]
+index-strategy = "unsafe-best-match" # Crucial for resolving complex dependency conflicts
+no-build-isolation-package = ["flash-attn-3"]
