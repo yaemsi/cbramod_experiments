@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "cbramod-experiments"
 version = "0.1.0"
@@ -57,9 +61,13 @@ url = "https://download.pytorch.org/whl/cu130"
 
 [tool.setuptools.packages.find]
     where = ["."] # Search in the current directory
-    include = ["cbramod_experiments"] # Include packages starting with these names
+    include = ["cbramod_experiments*"] # Include the package and all subpackages
 
 # Configuration for uv
 [tool.uv]
 index-strategy = "unsafe-best-match" # Crucial for resolving complex dependency conflicts
 no-build-isolation-package = ["flash-attn-3"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

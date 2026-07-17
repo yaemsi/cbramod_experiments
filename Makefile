@@ -1,57 +1,106 @@
-# ---------------------------------------------------------------------------
-# market_data_runner — dev commands
-# Run with: make <target>   |   make help for a list of targets
-# ---------------------------------------------------------------------------
+# CBraMod homework development commands.
+# Examples:
+#   make sync
+#   make test
+#   make preprocess RAW_DIR=/path/to/shu DATASET=data/processed/shu_mi.h5
+#   make train-cbramod DATASET=data/processed/shu_mi.h5
 
-.PHONY: main test install lint format typecheck hooks clean
+SHELL := /usr/bin/env bash
+.DEFAULT_GOAL := help
 
+UV ?= uv
+PYTHON ?= python
+PACKAGE := cbramod_experiments
+TEST_DIR := tests
 
-all: test
+RAW_DIR ?= data/raw/shu
+DATASET ?= data/processed/shu_mi.h5
+CBRAMOD_CONFIG ?= configs/cbramod.yaml
+SIMPLECONV_CONFIG ?= configs/eegsimpleconv.yaml
+PYTEST_ARGS ?=
+OVERWRITE ?= 0
 
-## Show available targets
-help:
-	@echo ""
-	@echo "Usage: make <target>"
+ifeq ($(OVERWRITE),1)
+PREPROCESS_FLAGS := --overwrite
+else
+PREPROCESS_FLAGS :=
+endif
 
+.PHONY: help all sync install lock update smoke main test test-verbose \
+        lint lint-fix format format-check typecheck check ci hooks \
+        preprocess train-cbramod train-simpleconv clean distclean
 
+all: check ## Run the full local validation suite.
 
-## Run the smoke test — quick install check (~15s)
-install:
-	uv sync
-	uv pip install .
+help: ## Show available targets.
+	@printf "\nUsage: make <target> [VARIABLE=value]\n\n"
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@printf "\nCommon variables:\n"
+	@printf "  RAW_DIR=%s\n  DATASET=%s\n  PYTEST_ARGS=%s\n  OVERWRITE=0|1\n\n" "$(RAW_DIR)" "$(DATASET)" "$(PYTEST_ARGS)"
 
-## Run the smoke test — quick install check (~15s)
-main:
-	uv run python -m main smoke
+sync: ## Create/update the uv environment and install the project.
+	$(UV) sync
 
-## Fast correctness suite only 
-test:
-	uv run pytest tests/*.py -v
+install: sync ## Alias for sync.
 
-## Run ruff linter (auto-fixes safe issues)
-lint:
-	uv run ruff check cbramod_experiments tests --fix
+lock: ## Regenerate uv.lock without upgrading declared dependencies.
+	$(UV) lock
 
-## Run ruff formatter
-format:
-	uv run ruff format cbramod_experiments tests
+update: ## Upgrade dependencies allowed by pyproject.toml.
+	$(UV) lock --upgrade
+	$(UV) sync
 
-## Run pyright type checker
-typecheck:
-	uv run pyright
+smoke: ## Run a quick model and metrics smoke test.
+	$(UV) run $(PYTHON) -m main smoke
 
-## Install pre-commit hooks (run once after cloning)
-hooks:
-	uv run pre-commit install
-	@echo "Pre-commit hooks installed. They will run automatically before each commit."
+main: smoke ## Backward-compatible alias for smoke.
 
-## Remove all generated artefacts
-clean:
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name "*.egg-info"   -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc"        -delete 2>/dev/null || true
-	find . -type f -name "*.pyo"        -delete 2>/dev/null || true
-	find . -type f -name "*.png"        -delete 2>/dev/null || true
-	rm -rf ./outputs/ 2>/dev/null || true
+test: ## Run the complete test suite.
+	$(UV) run $(PYTHON) -m pytest $(TEST_DIR) -q $(PYTEST_ARGS)
+
+test-verbose: ## Run tests with verbose output.
+	$(UV) run $(PYTHON) -m pytest $(TEST_DIR) -vv $(PYTEST_ARGS)
+
+lint: ## Check lint rules without modifying files.
+	$(UV) run ruff check $(PACKAGE) $(TEST_DIR) main.py
+
+lint-fix: ## Apply Ruff safe automatic fixes.
+	$(UV) run ruff check $(PACKAGE) $(TEST_DIR) main.py --fix
+
+format: ## Format source and tests.
+	$(UV) run ruff format $(PACKAGE) $(TEST_DIR) main.py
+
+format-check: ## Verify formatting without changing files.
+	$(UV) run ruff format --check $(PACKAGE) $(TEST_DIR) main.py
+
+typecheck: ## Run static type checking.
+	$(UV) run pyright $(PACKAGE) main.py
+
+check: format-check lint typecheck test smoke ## Run all local quality checks.
+
+ci: check ## CI-friendly validation alias.
+
+hooks: ## Install pre-commit hooks.
+	$(UV) run pre-commit install
+	@echo "Pre-commit hooks installed."
+
+preprocess: ## Preprocess SHU-MI MATLAB files into HDF5.
+	$(UV) run $(PYTHON) -m main preprocess --raw-dir "$(RAW_DIR)" --output "$(DATASET)" $(PREPROCESS_FLAGS)
+
+train-cbramod: ## Train/fine-tune CBraMod.
+	$(UV) run $(PYTHON) -m main train --config "$(CBRAMOD_CONFIG)"
+
+train-simpleconv: ## Train EEGSimpleConv.
+	$(UV) run $(PYTHON) -m main train --config "$(SIMPLECONV_CONFIG)"
+
+clean: ## Remove caches and generated experiment outputs.
+	find . -type d -name "__pycache__" -prune -exec rm -rf {} +
+	find . -type d -name ".pytest_cache" -prune -exec rm -rf {} +
+	find . -type d -name ".ruff_cache" -prune -exec rm -rf {} +
+	find . -type d -name ".mypy_cache" -prune -exec rm -rf {} +
+	find . -type d -name "*.egg-info" -prune -exec rm -rf {} +
+	find . -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete
+	rm -rf build dist outputs
+
+distclean: clean ## Remove caches plus the local virtual environment.
+	rm -rf .venv

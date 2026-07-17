@@ -42,7 +42,9 @@ def binary_metrics_from_logits(
         scores = 1.0 / (1.0 + np.exp(-np.clip(logits_np, -80.0, 80.0)))
 
     if scores.shape[0] != targets_np.shape[0]:
-        raise ValueError(f"Mismatched predictions and targets: {scores.shape} vs {targets_np.shape}")
+        raise ValueError(
+            f"Mismatched predictions and targets: {scores.shape} vs {targets_np.shape}"
+        )
     if np.unique(targets_np).size < 2:
         raise ValueError("AUROC/AUPRC require both classes in the evaluated split")
 
@@ -51,7 +53,9 @@ def binary_metrics_from_logits(
         balanced_accuracy=float(balanced_accuracy_score(targets_np, predictions)),
         auprc=float(average_precision_score(targets_np, scores)),
         auroc=float(roc_auc_score(targets_np, scores)),
-        confusion_matrix=confusion_matrix(targets_np, predictions, labels=[0, 1]).tolist(),
+        confusion_matrix=confusion_matrix(
+            targets_np, predictions, labels=[0, 1]
+        ).tolist(),
         num_examples=int(targets_np.size),
     )
 

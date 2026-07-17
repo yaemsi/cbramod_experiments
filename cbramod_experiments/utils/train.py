@@ -42,7 +42,9 @@ def fit_binary_classifier(
     output_dir.mkdir(parents=True, exist_ok=True)
     model.to(device)
 
-    optimizer = _build_optimizer(model, lr=lr, head_lr=head_lr, weight_decay=weight_decay)
+    optimizer = _build_optimizer(
+        model, lr=lr, head_lr=head_lr, weight_decay=weight_decay
+    )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=max(1, epochs * len(train_loader)), eta_min=1e-6
     )
@@ -141,10 +143,15 @@ def _build_optimizer(
     head_lr: float | None,
     weight_decay: float,
 ) -> torch.optim.Optimizer:
-    if head_lr is None or not hasattr(model, "backbone"):
+    backbone_module = getattr(model, "backbone", None)
+    if head_lr is None or not isinstance(backbone_module, torch.nn.Module):
         return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    backbone = [p for p in model.backbone.parameters() if p.requires_grad]
-    head = [p for name, p in model.named_parameters() if not name.startswith("backbone.") and p.requires_grad]
+    backbone = [p for p in backbone_module.parameters() if p.requires_grad]
+    head = [
+        p
+        for name, p in model.named_parameters()
+        if not name.startswith("backbone.") and p.requires_grad
+    ]
     groups = []
     if backbone:
         groups.append({"params": backbone, "lr": lr})

@@ -51,16 +51,22 @@ class CrissCrossEncoderLayer(nn.Module):
         spatial, temporal = x[..., : width // 2], x[..., width // 2 :]
 
         spatial = spatial.transpose(1, 2).reshape(batch * patches, channels, width // 2)
-        spatial = self.spatial_attention(spatial, spatial, spatial, need_weights=False)[0]
+        spatial = self.spatial_attention(spatial, spatial, spatial, need_weights=False)[
+            0
+        ]
         spatial = spatial.reshape(batch, patches, channels, width // 2).transpose(1, 2)
 
         temporal = temporal.reshape(batch * channels, patches, width // 2)
-        temporal = self.temporal_attention(temporal, temporal, temporal, need_weights=False)[0]
+        temporal = self.temporal_attention(
+            temporal, temporal, temporal, need_weights=False
+        )[0]
         temporal = temporal.reshape(batch, channels, patches, width // 2)
         return self.dropout1(torch.cat((spatial, temporal), dim=-1))
 
     def _feedforward_block(self, x: Tensor) -> Tensor:
-        return self.dropout2(self.linear2(self.dropout(self.activation(self.linear1(x)))))
+        return self.dropout2(
+            self.linear2(self.dropout(self.activation(self.linear1(x))))
+        )
 
 
 class PatchEmbedding(nn.Module):
@@ -95,7 +101,9 @@ class PatchEmbedding(nn.Module):
     def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
         batch, channels, patches, patch_size = x.shape
         if patch_size != self.patch_size:
-            raise ValueError(f"Expected patch size {self.patch_size}, received {patch_size}")
+            raise ValueError(
+                f"Expected patch size {self.patch_size}, received {patch_size}"
+            )
         if mask is None:
             masked = x
         else:
@@ -109,11 +117,15 @@ class PatchEmbedding(nn.Module):
         )
 
         spectrum = torch.fft.rfft(
-            flattened.reshape(batch * channels * patches, patch_size), dim=-1, norm="forward"
+            flattened.reshape(batch * channels * patches, patch_size),
+            dim=-1,
+            norm="forward",
         ).abs()
         spectrum = spectrum.reshape(batch, channels, patches, patch_size // 2 + 1)
         embedding = time_embedding + self.spectral_projection(spectrum)
-        position = self.positional_encoding(embedding.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+        position = self.positional_encoding(embedding.permute(0, 3, 1, 2)).permute(
+            0, 2, 3, 1
+        )
         return embedding + position
 
 
@@ -136,7 +148,7 @@ class CBraModBackbone(nn.Module):
             dim_feedforward=dim_feedforward,
         )
         self.encoder = nn.ModuleList(copy.deepcopy(layer) for _ in range(num_layers))
-        self.proj_out = nn.Linear(d_model, d_model)
+        self.proj_out: nn.Module = nn.Linear(d_model, d_model)
         self.apply(_weights_init)
 
     def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
@@ -203,17 +215,23 @@ class CBraModClassifier(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         if x.ndim != 3:
-            raise ValueError(f"Expected [batch, channels, time], received {tuple(x.shape)}")
+            raise ValueError(
+                f"Expected [batch, channels, time], received {tuple(x.shape)}"
+            )
         batch, channels, time = x.shape
         if time % 200:
-            raise ValueError("CBraMod expects a time length divisible by its 200-sample patch size")
+            raise ValueError(
+                "CBraMod expects a time length divisible by its 200-sample patch size"
+            )
         patches = time // 200
         features = self.backbone(x.reshape(batch, channels, patches, 200))
         return self.classifier(features).reshape(-1)
 
     def load_pretrained(self, repo_id: str, filename: str) -> None:
         checkpoint = hf_hub_download(repo_id=repo_id, filename=filename)
-        payload: Any = torch.load(Path(checkpoint), map_location="cpu", weights_only=True)
+        payload: Any = torch.load(
+            Path(checkpoint), map_location="cpu", weights_only=True
+        )
         if isinstance(payload, dict) and "state_dict" in payload:
             payload = payload["state_dict"]
         if not isinstance(payload, dict):
@@ -239,7 +257,10 @@ def _remap_official_key(key: str) -> str:
     replacements = (
         ("patch_embedding.proj_in.", "patch_embedding.time_projection."),
         ("patch_embedding.spectral_proj.", "patch_embedding.spectral_projection."),
-        ("patch_embedding.positional_encoding.0.", "patch_embedding.positional_encoding."),
+        (
+            "patch_embedding.positional_encoding.0.",
+            "patch_embedding.positional_encoding.",
+        ),
         ("encoder.layers.", "encoder."),
         (".self_attn_s.", ".spatial_attention."),
         (".self_attn_t.", ".temporal_attention."),

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 
-import torch
 from torch import Tensor, nn
 from torchaudio.transforms import Resample
 
@@ -71,7 +70,9 @@ class EEGSimpleConv(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         if x.ndim != 3:
-            raise ValueError(f"Expected [batch, channels, time], received {tuple(x.shape)}")
+            raise ValueError(
+                f"Expected [batch, channels, time], received {tuple(x.shape)}"
+            )
         features = self.stem(self.resample(x.contiguous()))
         for block in self.blocks:
             features = block(features)

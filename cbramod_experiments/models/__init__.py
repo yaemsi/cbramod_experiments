@@ -1,9 +1,11 @@
-from .factory import build_model
+"""Model architectures and model factory."""
+
 from .cbramod import CBraModClassifier
 from .eegsimpleconv import EEGSimpleConv
+from .factory import build_model
 
 __all__ = [
-    "build_model",
     "CBraModClassifier",
     "EEGSimpleConv",
+    "build_model",
 ]

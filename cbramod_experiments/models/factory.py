@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from torch import nn
 
-from cbramod_experiments.models.eegsimpleconv import EEGSimpleConv
-from cbramod_experiments.models.cbramod import CBraModClassifier
-from cbramod_experiments.utils import ModelConfig
+from cbramod_experiments.utils.config import ModelConfig
+
+from .cbramod import CBraModClassifier
+from .eegsimpleconv import EEGSimpleConv
 
 
 def build_model(config: ModelConfig) -> nn.Module:

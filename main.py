@@ -8,30 +8,28 @@ import torch
 from cbramod_experiments.utils import (
     load_config,
     binary_metrics_from_logits,
-    count_parameters, 
-    resolve_device, 
+    count_parameters,
+    resolve_device,
     seed_everything,
     fit_binary_classifier,
 )
 
-from cbramod_experiments.datasets import (
-    SHUDataModule, 
-    preprocess_shu
-)
+from cbramod_experiments.datasets import SHUDataModule, preprocess_shu
 
 from cbramod_experiments.models import (
-    build_model, 
+    build_model,
     CBraModClassifier,
     EEGSimpleConv,
 )
-
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CBraMod SHU-MI homework experiments")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    preprocess_parser = subparsers.add_parser("preprocess", help="Convert SHU .mat files to HDF5")
+    preprocess_parser = subparsers.add_parser(
+        "preprocess", help="Convert SHU .mat files to HDF5"
+    )
     preprocess_parser.add_argument("--raw-dir", required=True)
     preprocess_parser.add_argument("--output", required=True)
     preprocess_parser.add_argument("--overwrite", action="store_true")
@@ -94,7 +92,11 @@ def run_smoke_test() -> None:
     targets = torch.tensor([0, 1, 0, 1, 0, 1, 0, 1])
 
     cbramod = CBraModClassifier(
-        num_channels=2, num_patches=1, num_layers=1, pretrained=False, classifier="avg_pool"
+        num_channels=2,
+        num_patches=1,
+        num_layers=1,
+        pretrained=False,
+        classifier="avg_pool",
     )
     cbramod_input = torch.randn(1, 2, 200)
     cbramod_logits = cbramod(cbramod_input)

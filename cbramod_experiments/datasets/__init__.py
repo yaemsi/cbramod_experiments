@@ -1,11 +1,21 @@
+"""Dataset preprocessing and loading utilities."""
+
 from .shumi import (
-    SHUDataModule, 
-    SHUH5Dataset, 
+    PreprocessingSummary,
+    SHUDataModule,
+    SHUH5Dataset,
+    parse_session_id,
+    parse_subject_id,
     preprocess_shu,
+    subject_split,
 )
 
 __all__ = [
-    "SHUDataModule", 
-    "SHUH5Dataset", 
-    "preprocess_shu"
-    ]
+    "PreprocessingSummary",
+    "SHUDataModule",
+    "SHUH5Dataset",
+    "parse_session_id",
+    "parse_subject_id",
+    "preprocess_shu",
+    "subject_split",
+]

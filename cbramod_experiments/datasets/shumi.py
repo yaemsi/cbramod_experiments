@@ -13,7 +13,7 @@ from scipy import signal
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from cbramod_experiments.utils import seed_worker
+from cbramod_experiments.utils.utils import seed_worker
 
 
 @dataclass(frozen=True)
@@ -29,9 +29,7 @@ class PreprocessingSummary:
 _EXPLICIT_SUBJECT_PATTERN = re.compile(
     r"(?i)sub(?:ject)?[-_ ]*0*(?P<subject>[1-9]|1\d|2[0-5])(?:\D|$)"
 )
-_FALLBACK_SUBJECT_PATTERN = re.compile(
-    r"0*(?P<subject>[1-9]|1\d|2[0-5])(?:\D|$)"
-)
+_FALLBACK_SUBJECT_PATTERN = re.compile(r"0*(?P<subject>[1-9]|1\d|2[0-5])(?:\D|$)")
 _SESSION_PATTERN = re.compile(r"(?i)(?:ses|sess|session)[-_ ]*0*(?P<session>[1-9]\d*)")
 
 
@@ -83,7 +81,9 @@ def preprocess_shu(
     if not files:
         raise FileNotFoundError(f"No .mat files found below {raw_dir}")
     if output_path.exists() and not overwrite:
-        raise FileExistsError(f"Output already exists: {output_path}; use overwrite=True")
+        raise FileExistsError(
+            f"Output already exists: {output_path}; use overwrite=True"
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         output_path.unlink()
@@ -98,10 +98,18 @@ def preprocess_shu(
 
     with h5py.File(output_path, "w") as handle:
         signals = None
-        labels = handle.create_dataset("labels", shape=(0,), maxshape=(None,), dtype="i1")
-        subjects = handle.create_dataset("subject_ids", shape=(0,), maxshape=(None,), dtype="i2")
-        sessions = handle.create_dataset("session_ids", shape=(0,), maxshape=(None,), dtype="i2")
-        trial_ids = handle.create_dataset("trial_ids", shape=(0,), maxshape=(None,), dtype="i4")
+        labels = handle.create_dataset(
+            "labels", shape=(0,), maxshape=(None,), dtype="i1"
+        )
+        subjects = handle.create_dataset(
+            "subject_ids", shape=(0,), maxshape=(None,), dtype="i2"
+        )
+        sessions = handle.create_dataset(
+            "session_ids", shape=(0,), maxshape=(None,), dtype="i2"
+        )
+        trial_ids = handle.create_dataset(
+            "trial_ids", shape=(0,), maxshape=(None,), dtype="i4"
+        )
         source_files = handle.create_dataset(
             "source_files", shape=(0,), maxshape=(None,), dtype=string_dtype
         )
@@ -109,13 +117,19 @@ def preprocess_shu(
         for source_path in files:
             payload = scipy.io.loadmat(source_path)
             if "data" not in payload or "labels" not in payload:
-                raise KeyError(f"{source_path} must contain MATLAB variables 'data' and 'labels'")
+                raise KeyError(
+                    f"{source_path} must contain MATLAB variables 'data' and 'labels'"
+                )
             eeg = np.asarray(payload["data"])
             target = np.asarray(payload["labels"]).reshape(-1)
             if eeg.ndim != 3:
-                raise ValueError(f"Expected [trials, channels, time] in {source_path}, got {eeg.shape}")
+                raise ValueError(
+                    f"Expected [trials, channels, time] in {source_path}, got {eeg.shape}"
+                )
             if eeg.shape[0] != target.shape[0]:
-                raise ValueError(f"Trial/label mismatch in {source_path}: {eeg.shape[0]} vs {target.shape[0]}")
+                raise ValueError(
+                    f"Trial/label mismatch in {source_path}: {eeg.shape[0]} vs {target.shape[0]}"
+                )
             if channels is None:
                 channels = int(eeg.shape[1])
                 observed_original_points = int(eeg.shape[2])
@@ -130,7 +144,9 @@ def preprocess_shu(
                     dtype="f4",
                 )
             if eeg.shape[1] != channels:
-                raise ValueError(f"Channel count changed in {source_path}: {eeg.shape[1]} vs {channels}")
+                raise ValueError(
+                    f"Channel count changed in {source_path}: {eeg.shape[1]} vs {channels}"
+                )
             if eeg.shape[2] != observed_original_points:
                 raise ValueError(
                     f"Signal length changed in {source_path}: {eeg.shape[2]} vs {observed_original_points}"
@@ -144,17 +160,28 @@ def preprocess_shu(
             subject_id = parse_subject_id(source_path.name)
             session_id = parse_session_id(source_path.name)
             split = subject_split(subject_id)
-            eeg = signal.resample(eeg, target_points, axis=-1).astype(np.float32, copy=False)
+            eeg = np.asarray(
+                signal.resample(eeg, target_points, axis=-1), dtype=np.float32
+            )
             target = target.astype(np.int64, copy=False)
             if target.min() == 1 and target.max() == 2:
                 target = target - 1
             if not np.isin(target, [0, 1]).all():
-                raise ValueError(f"Expected binary labels encoded as 0/1 or 1/2 in {source_path}")
+                raise ValueError(
+                    f"Expected binary labels encoded as 0/1 or 1/2 in {source_path}"
+                )
 
             start = total_examples
             end = start + eeg.shape[0]
             assert signals is not None
-            for dataset in (signals, labels, subjects, sessions, trial_ids, source_files):
+            for dataset in (
+                signals,
+                labels,
+                subjects,
+                sessions,
+                trial_ids,
+                source_files,
+            ):
                 dataset.resize((end,) + dataset.shape[1:])
             signals[start:end] = eeg
             labels[start:end] = target.astype(np.int8)
@@ -219,8 +246,14 @@ class SHUH5Dataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         row = int(self.indices[index])
         handle = self._file()
-        eeg = np.asarray(handle["signals"][row], dtype=np.float32) / self.amplitude_scale
-        label = int(handle["labels"][row])
+        signals = handle["signals"]
+        labels = handle["labels"]
+        if not isinstance(signals, h5py.Dataset) or not isinstance(
+            labels, h5py.Dataset
+        ):
+            raise TypeError("Expected signals and labels to be HDF5 datasets")
+        eeg = np.asarray(signals[row], dtype=np.float32) / self.amplitude_scale
+        label = int(np.asarray(labels[row]).item())
         return torch.from_numpy(eeg), torch.tensor(label, dtype=torch.long)
 
     def __getstate__(self) -> dict[str, Any]:
