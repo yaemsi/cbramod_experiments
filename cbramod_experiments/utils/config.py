@@ -114,4 +114,6 @@ def _validate_config(config: ExperimentConfig) -> None:
     if not float(points).is_integer():
         raise ValueError("sampling_rate * window_seconds must be an integer")
     if config.model.name.lower() == "cbramod" and int(points) % 200:
-        raise ValueError("CBraMod requires a window containing a multiple of 200 samples")
+        raise ValueError(
+            "CBraMod requires a window containing a multiple of 200 samples"
+        )

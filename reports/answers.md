@@ -830,17 +830,17 @@ the same idle GPU with identical warm-up and iteration counts.
 
 The results support four conclusions:
 
-1. **CBraMod provides a clear predictive advantage.**  
+1. **CBraMod provides a clear predictive advantage.**
    Its mean AUROC is 0.0631 higher, and it wins every matched seed.
 
-2. **Pretraining improves adaptation speed and stability.**  
+2. **Pretraining improves adaptation speed and stability.**
    CBraMod peaks much earlier and has lower seed-to-seed variance.
 
-3. **EEGSimpleConv learns signal but struggles with cross-subject calibration.**  
+3. **EEGSimpleConv learns signal but struggles with cross-subject calibration.**
    AUROC remains above chance, yet the 0.5 threshold frequently collapses toward
    one class.
 
-4. **The predictive gain has a substantial model-size cost.**  
+4. **The predictive gain has a substantial model-size cost.**
    CBraMod is 34.5× larger under the selected classifier, so the correct choice
    depends on deployment constraints.
 

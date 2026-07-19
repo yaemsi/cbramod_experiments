@@ -57,7 +57,7 @@ CHECKPOINT_FLAG :=
 endif
 
 .PHONY: help all sync install lock update smoke main test test-verbose \
-        lint lint-fix format format-check typecheck check ci hooks \
+        lint lint-fix format format-check typecheck check ci hooks hooks-run hooks-run-push hooks-uninstall \
         preprocess inspect-data check-checkpoint train-cbramod train-simpleconv \
         reproduce-cbramod reproduce-cbramod-debug reproduce-simpleconv \
         benchmark-cbramod benchmark-simpleconv benchmark-models compare-models task-c \
@@ -116,9 +116,19 @@ check: format-check lint typecheck test smoke ## Run all local quality checks.
 
 ci: check ## CI-friendly validation alias.
 
-hooks: ## Install pre-commit hooks.
-	$(UV) run pre-commit install
-	@echo "Pre-commit hooks installed."
+hooks: ## Install both pre-commit and pre-push hooks.
+	$(UV) run pre-commit install --install-hooks --hook-type pre-commit --hook-type pre-push
+	@echo "Pre-commit and pre-push hooks installed."
+
+hooks-run: ## Run commit-stage hooks on all tracked files.
+	$(UV) run pre-commit run --hook-stage pre-commit --all-files
+
+hooks-run-push: ## Run push-stage hooks on all tracked files.
+	$(UV) run pre-commit run --hook-stage pre-push --all-files
+
+hooks-uninstall: ## Remove the installed commit and push hooks.
+	$(UV) run pre-commit uninstall --hook-type pre-commit
+	$(UV) run pre-commit uninstall --hook-type pre-push
 
 preprocess: ## Preprocess the full SHU-MI MATLAB archive into HDF5.
 	$(UV) run $(PYTHON) -m main preprocess --raw-dir "$(RAW_DIR)" --output "$(DATASET)" $(PREPROCESS_FLAGS)

@@ -177,7 +177,9 @@ def execute_training(config: ExperimentConfig, *, strict_data: bool) -> FitResul
     output_dir = Path(config.training.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     save_json(config.to_dict(), output_dir / "resolved_config.json")
-    save_json(_runtime_manifest(model, device, audit.to_dict()), output_dir / "run.json")
+    save_json(
+        _runtime_manifest(model, device, audit.to_dict()), output_dir / "run.json"
+    )
     return fit_binary_classifier(
         model,
         data["train"],

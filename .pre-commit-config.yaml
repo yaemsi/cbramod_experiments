@@ -1,44 +1,62 @@
-# Pre-commit hooks — run automatically before every commit.
-# Install once with: uv run pre-commit install
-# Run manually on all files: uv run pre-commit run --all-files
+# Local Git quality gates.
+# Install once with: make hooks
+# Run commit-stage hooks: make hooks-run
+# Run push-stage hooks: make hooks-run-push
+
+default_install_hook_types:
+  - pre-commit
+  - pre-push
 
 repos:
-  # ── Ruff: lint + format ──────────────────────────────────────────────────
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.0
-    hooks:
-      - id: ruff               # linting (replaces flake8, isort, pyupgrade)
-        args: [--fix]          # auto-fix safe issues (unused imports, etc.)
-      - id: ruff-format        # formatting (replaces black)
-
-  # ── Pyright: type checking ───────────────────────────────────────────────
-  - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.390
-    hooks:
-      - id: pyright
-        additional_dependencies: []
-
-  # ── Fast correctness tests ───────────────────────────────────────────────
-  # Runs test_runner.py + test_schema_and_multiple.py (~35s).
-  # test_scale.py is excluded — Spark benchmarks are too slow for a commit hook.
+  # Use the project's uv environment so Ruff, Pyright, and pytest see the
+  # exact dependency versions declared in pyproject.toml.
   - repo: local
     hooks:
-      - id: pytest-fast
-        name: pytest (fast suite)
-        entry: uv run pytest tests/test_runner.py tests/test_schema_and_multiple.py -x -q
+      - id: ruff
+        name: ruff
+        entry: uv run ruff check --fix
+        language: system
+        files: '\.(py|pyi|ipynb)$'
+        stages: [pre-commit]
+
+      - id: ruff-format
+        name: ruff-format
+        entry: uv run ruff format
+        language: system
+        files: '\.(py|pyi|ipynb)$'
+        stages: [pre-commit]
+
+      - id: pyright
+        name: pyright
+        entry: uv run pyright cbramod_experiments main.py
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-push]
 
-  # ── General hygiene ──────────────────────────────────────────────────────
+      - id: pytest
+        name: pytest
+        entry: uv run python -m pytest tests -x -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
-      - id: trailing-whitespace   # strip trailing spaces
-      - id: end-of-file-fixer     # ensure files end with a newline
-      - id: check-yaml            # validate YAML syntax
-      - id: check-toml            # validate TOML syntax
-      - id: check-merge-conflict  # catch unresolved merge conflict markers
-      - id: debug-statements      # catch accidental breakpoint() / pdb.set_trace()
+      - id: trailing-whitespace
+        stages: [pre-commit]
+      - id: end-of-file-fixer
+        stages: [pre-commit]
+      - id: check-yaml
+        stages: [pre-commit]
+      - id: check-toml
+        stages: [pre-commit]
+      - id: check-merge-conflict
+        stages: [pre-commit, pre-push]
+      - id: debug-statements
+        stages: [pre-commit]
       - id: check-added-large-files
-        args: [--maxkb=500]       # warn if a file > 500 KB is staged
+        args: [--maxkb=500]
+        stages: [pre-commit]

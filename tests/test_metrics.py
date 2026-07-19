@@ -19,7 +19,9 @@ def test_auprc_matches_trapezoidal_official_evaluator() -> None:
     probabilities = torch.tensor([0.90, 0.80, 0.70, 0.20, 0.10])
     logits = torch.logit(probabilities)
     metrics = binary_metrics_from_logits(logits, targets)
-    precision, recall, _ = precision_recall_curve(targets.numpy(), probabilities.numpy())
+    precision, recall, _ = precision_recall_curve(
+        targets.numpy(), probabilities.numpy()
+    )
     expected_auc = auc(recall, precision)
     expected_ap = average_precision_score(targets.numpy(), probabilities.numpy())
     assert metrics.auprc == expected_auc

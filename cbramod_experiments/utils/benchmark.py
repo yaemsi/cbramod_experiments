@@ -52,7 +52,9 @@ def benchmark_model(
     output_path: str | Path | None = None,
 ) -> ModelBenchmark:
     if warmup_iterations < 0 or measured_iterations <= 0:
-        raise ValueError("warmup_iterations must be non-negative and measured_iterations positive")
+        raise ValueError(
+            "warmup_iterations must be non-negative and measured_iterations positive"
+        )
     if not batch_sizes or any(batch_size <= 0 for batch_size in batch_sizes):
         raise ValueError("batch_sizes must contain positive integers")
 

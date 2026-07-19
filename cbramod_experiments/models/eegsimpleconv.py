@@ -39,7 +39,9 @@ class EEGSimpleConv(nn.Module):
         if sampling_rate <= 0 or resampling_rate <= 0:
             raise ValueError("sampling rates must be positive")
         if feature_maps <= 0 or num_blocks <= 0 or kernel_size <= 0:
-            raise ValueError("feature_maps, num_blocks, and kernel_size must be positive")
+            raise ValueError(
+                "feature_maps, num_blocks, and kernel_size must be positive"
+            )
         try:
             activation_factory = _ACTIVATIONS[activation.lower()]
         except KeyError as exc:

@@ -276,12 +276,26 @@ def audit_shu_h5(
         signals = handle["signals"]
         labels = handle["labels"]
         subjects = handle["subject_ids"]
-        if not all(isinstance(item, h5py.Dataset) for item in (signals, labels, subjects)):
-            raise TypeError("signals, labels, and subject_ids must be HDF5 datasets")
+        # Check each object separately so static type checkers narrow the HDF5
+        # union returned by ``handle[name]`` to ``h5py.Dataset``.
+        if not isinstance(signals, h5py.Dataset):
+            raise TypeError("signals must be an HDF5 dataset")
+        if not isinstance(labels, h5py.Dataset):
+            raise TypeError("labels must be an HDF5 dataset")
+        if not isinstance(subjects, h5py.Dataset):
+            raise TypeError("subject_ids must be an HDF5 dataset")
         if signals.ndim != 3:
-            raise ValueError(f"Expected signals [examples, channels, points], got {signals.shape}")
+            raise ValueError(
+                f"Expected signals [examples, channels, points], got {signals.shape}"
+            )
         examples, channels, points = map(int, signals.shape)
-        for name in ("labels", "subject_ids", "session_ids", "trial_ids", "source_files"):
+        for name in (
+            "labels",
+            "subject_ids",
+            "session_ids",
+            "trial_ids",
+            "source_files",
+        ):
             item = handle[name]
             if not isinstance(item, h5py.Dataset) or item.shape[0] != examples:
                 raise ValueError(f"{name} must contain {examples} rows")
@@ -305,7 +319,9 @@ def audit_shu_h5(
             if np.unique(indices).size != indices.size:
                 raise ValueError(f"Split {split} contains duplicate indices")
             seen_indices.append(indices)
-            subject_values = sorted(np.unique(all_subjects[indices]).astype(int).tolist())
+            subject_values = sorted(
+                np.unique(all_subjects[indices]).astype(int).tolist()
+            )
             observed_subjects = set(subject_values)
             invalid = observed_subjects.difference(expected_subjects[split])
             if invalid:
@@ -313,7 +329,11 @@ def audit_shu_h5(
                     f"Subject leakage in {split}: subjects {sorted(invalid)} belong to another split"
                 )
             split_labels = all_labels[indices]
-            counts = np.bincount(split_labels, minlength=2) if indices.size else np.array([0, 0])
+            counts = (
+                np.bincount(split_labels, minlength=2)
+                if indices.size
+                else np.array([0, 0])
+            )
             split_examples[split] = int(indices.size)
             split_subjects[split] = subject_values
             split_class_counts[split] = {"0": int(counts[0]), "1": int(counts[1])}
@@ -325,11 +345,17 @@ def audit_shu_h5(
                     f"Split {split} is missing subjects {sorted(missing_subjects)}"
                 )
 
-        concatenated = np.concatenate(seen_indices) if seen_indices else np.empty(0, dtype=np.int64)
+        concatenated = (
+            np.concatenate(seen_indices)
+            if seen_indices
+            else np.empty(0, dtype=np.int64)
+        )
         if np.unique(concatenated).size != concatenated.size:
             raise ValueError("Train/validation/test splits overlap")
         if set(concatenated.tolist()) != set(range(examples)):
-            raise ValueError("Train/validation/test splits do not cover every example exactly once")
+            raise ValueError(
+                "Train/validation/test splits do not cover every example exactly once"
+            )
 
     complete = all(
         set(split_subjects[name]) == expected_subjects[name]
@@ -340,12 +366,15 @@ def audit_shu_h5(
             f"Paper reports 11,988 examples; processed file contains {examples}"
         )
     if channels != 32:
-        warnings.append(f"Paper protocol uses 32 channels; processed file contains {channels}")
+        warnings.append(
+            f"Paper protocol uses 32 channels; processed file contains {channels}"
+        )
     if points != 800:
-        warnings.append(f"Paper protocol uses 800 points; processed file contains {points}")
+        warnings.append(
+            f"Paper protocol uses 800 points; processed file contains {points}"
+        )
     both_classes = all(
-        counts["0"] > 0 and counts["1"] > 0
-        for counts in split_class_counts.values()
+        counts["0"] > 0 and counts["1"] > 0 for counts in split_class_counts.values()
     )
     paper_protocol_ready = (
         complete

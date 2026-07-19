@@ -19,9 +19,7 @@ class TinyClassifier(nn.Module):
 
 
 def test_training_loop_writes_reproduction_artifacts(tmp_path: Path) -> None:
-    signals = torch.tensor(
-        [[-2.0, -1.0], [2.0, 1.0], [-1.0, -2.0], [1.0, 2.0]]
-    )
+    signals = torch.tensor([[-2.0, -1.0], [2.0, 1.0], [-1.0, -2.0], [1.0, 2.0]])
     labels = torch.tensor([0, 1, 0, 1])
     loader = DataLoader(TensorDataset(signals, labels), batch_size=2, shuffle=False)
     result = fit_binary_classifier(

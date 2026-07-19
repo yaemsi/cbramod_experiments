@@ -12,7 +12,10 @@ def _official_key(key: str) -> str:
     replacements = (
         ("patch_embedding.time_projection.", "patch_embedding.proj_in."),
         ("patch_embedding.spectral_projection.", "patch_embedding.spectral_proj."),
-        ("patch_embedding.positional_encoding.", "patch_embedding.positional_encoding.0."),
+        (
+            "patch_embedding.positional_encoding.",
+            "patch_embedding.positional_encoding.0.",
+        ),
         ("encoder.", "encoder.layers."),
         (".spatial_attention.", ".self_attn_s."),
         (".temporal_attention.", ".self_attn_t."),

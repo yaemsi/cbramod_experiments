@@ -100,9 +100,7 @@ def _render_markdown(comparison: dict[str, Any]) -> str:
         benchmark_section = (
             "\n## Efficiency\n\n"
             "| Measurement | CBraMod | EEGSimpleConv |\n"
-            "|---|---:|---:|\n"
-            + "\n".join(benchmark_rows)
-            + "\n"
+            "|---|---:|---:|\n" + "\n".join(benchmark_rows) + "\n"
         )
 
     return (

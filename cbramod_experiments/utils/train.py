@@ -75,7 +75,7 @@ def fit_binary_classifier(
         scheduler_interval=scheduler_interval,
     )
     use_amp = amp and device.type == "cuda"
-    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    scaler = torch.GradScaler("cuda", enabled=use_amp)
 
     best_state: dict[str, torch.Tensor] | None = None
     best_metrics: BinaryMetrics | None = None
@@ -198,6 +198,8 @@ def _build_optimizer(
     if head_lr is None or not isinstance(backbone_module, torch.nn.Module):
         return optimizer_type(model.parameters(), lr=lr, weight_decay=weight_decay)
 
+    # Keep the narrowing explicit for static type checkers.
+    assert isinstance(backbone_module, torch.nn.Module)
     backbone = [p for p in backbone_module.parameters() if p.requires_grad]
     head = [
         p
@@ -229,7 +231,9 @@ def _build_scheduler(
     if scheduler_key == "none":
         return None
     if scheduler_key == "cosine":
-        total_units = epochs * steps_per_epoch if scheduler_interval == "step" else epochs
+        total_units = (
+            epochs * steps_per_epoch if scheduler_interval == "step" else epochs
+        )
         return torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=max(1, total_units), eta_min=min_lr
         )

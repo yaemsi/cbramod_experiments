@@ -58,7 +58,9 @@ def binary_metrics_from_logits(
     if unique_targets.size < 2:
         raise ValueError("AUROC/AUC-PR require both classes in the evaluated split")
     if not np.isin(unique_targets, [0, 1]).all():
-        raise ValueError(f"Expected binary targets encoded as 0/1, got {unique_targets}")
+        raise ValueError(
+            f"Expected binary targets encoded as 0/1, got {unique_targets}"
+        )
 
     predictions = (scores >= threshold).astype(np.int64)
     precision, recall, _ = precision_recall_curve(targets_np, scores, pos_label=1)
