@@ -31,3 +31,26 @@ def test_preprocess_shu_assigns_subject_splits(tmp_path: Path) -> None:
         assert handle["splits/val"].shape == (2,)
         assert handle["splits/test"].shape == (2,)
         assert handle["labels"][:].tolist() == [0, 1, 0, 1, 0, 1]
+
+
+def test_audit_rejects_incomplete_protocol_in_strict_mode(tmp_path: Path) -> None:
+    import pytest
+
+    from cbramod_experiments.datasets import audit_shu_h5
+
+    raw = tmp_path / "raw_partial"
+    raw.mkdir()
+    savemat(
+        raw / "sub-001_ses-01_task_motorimagery_eeg.mat",
+        {
+            "data": np.zeros((2, 32, 1000), dtype=np.float32),
+            "labels": np.array([[1, 2]], dtype=np.int64),
+        },
+    )
+    output = tmp_path / "partial.h5"
+    preprocess_shu(raw, output)
+    audit = audit_shu_h5(output)
+    assert audit.complete_subject_protocol is False
+    assert audit.split_examples == {"train": 2, "val": 0, "test": 0}
+    with pytest.raises(ValueError, match="complete paper protocol"):
+        audit_shu_h5(output, require_complete_protocol=True)

@@ -1,7 +1,7 @@
 data:
   path: data/processed/shu_mi.h5
   batch_size: 64
-  num_workers: 4
+  num_workers: 16
   pin_memory: true
   persistent_workers: true
 
@@ -19,16 +19,23 @@ model:
     num_blocks: 2
     resampling_rate: 80
     kernel_size: 8
+    activation: relu
 
 training:
   epochs: 50
   lr: 0.001
   head_lr: null
-  weight_decay: 0.0001
+  weight_decay: 0.0
   label_smoothing: 0.0
-  grad_clip_norm: 1.0
-  patience: 10
+  grad_clip_norm: 0.0
+  patience: 50
   seed: 3407
-  amp: true
-  output_dir: outputs/eegsimpleconv_seed3407
+  amp: false
+  output_dir: outputs/eegsimpleconv_shu_mi
   device: auto
+  optimizer: adam
+  scheduler: step
+  scheduler_interval: epoch
+  min_lr: 0.0
+  lr_decay_epoch: 40
+  lr_decay_gamma: 0.1

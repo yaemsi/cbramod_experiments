@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -172,6 +173,8 @@ class CBraModClassifier(nn.Module):
         pretrained: bool = False,
         checkpoint_repo: str = "weighting666/CBraMod",
         checkpoint_filename: str = "pretrained_weights.pth",
+        checkpoint_path: str | None = None,
+        checkpoint_sha256: str | None = None,
         freeze_backbone: bool = False,
     ) -> None:
         super().__init__()
@@ -181,8 +184,15 @@ class CBraModClassifier(nn.Module):
             num_layers=num_layers,
             nhead=nhead,
         )
+        self.pretrained_checkpoint: str | None = None
+        self.pretrained_checkpoint_sha256: str | None = None
         if pretrained:
-            self.load_pretrained(checkpoint_repo, checkpoint_filename)
+            self.load_pretrained(
+                checkpoint_repo,
+                checkpoint_filename,
+                checkpoint_path=checkpoint_path,
+                expected_sha256=checkpoint_sha256,
+            )
         self.backbone.proj_out = nn.Identity()
         if freeze_backbone:
             self.backbone.requires_grad_(False)
@@ -227,22 +237,51 @@ class CBraModClassifier(nn.Module):
         features = self.backbone(x.reshape(batch, channels, patches, 200))
         return self.classifier(features).reshape(-1)
 
-    def load_pretrained(self, repo_id: str, filename: str) -> None:
-        checkpoint = hf_hub_download(repo_id=repo_id, filename=filename)
-        payload: Any = torch.load(
-            Path(checkpoint), map_location="cpu", weights_only=True
+    def load_pretrained(
+        self,
+        repo_id: str,
+        filename: str,
+        *,
+        checkpoint_path: str | None = None,
+        expected_sha256: str | None = None,
+    ) -> None:
+        path = (
+            Path(checkpoint_path).expanduser().resolve()
+            if checkpoint_path is not None
+            else Path(hf_hub_download(repo_id=repo_id, filename=filename)).resolve()
         )
+        if not path.is_file():
+            raise FileNotFoundError(f"Pretrained checkpoint not found: {path}")
+
+        digest = _sha256(path)
+        if expected_sha256 is not None and digest.lower() != expected_sha256.lower():
+            raise ValueError(
+                f"Checkpoint SHA256 mismatch for {path}: expected "
+                f"{expected_sha256}, received {digest}"
+            )
+
+        payload: Any = torch.load(path, map_location="cpu", weights_only=True)
         if isinstance(payload, dict) and "state_dict" in payload:
             payload = payload["state_dict"]
         if not isinstance(payload, dict):
             raise TypeError(f"Unsupported checkpoint type: {type(payload)!r}")
-        payload = {_remap_official_key(key): value for key, value in payload.items()}
-        missing, unexpected = self.backbone.load_state_dict(payload, strict=False)
+        remapped = {_remap_official_key(key): value for key, value in payload.items()}
+        missing, unexpected = self.backbone.load_state_dict(remapped, strict=False)
         if missing or unexpected:
             raise RuntimeError(
                 "Released checkpoint is not architecture-compatible. "
                 f"Missing keys: {missing}; unexpected keys: {unexpected}"
             )
+        self.pretrained_checkpoint = str(path)
+        self.pretrained_checkpoint_sha256 = digest
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _weights_init(module: nn.Module) -> None:

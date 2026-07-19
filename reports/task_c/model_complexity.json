@@ -1,0 +1,20 @@
+{
+  "cbramod": {
+    "parameters": 25525001,
+    "backbone_parameters": 4883800,
+    "classifier_parameters": 20641201,
+    "classifier_fraction": 0.8086660212079914,
+    "state_size_mib": 97.37015151977539,
+    "pretrained": true
+  },
+  "eegsimpleconv": {
+    "parameters": 740101,
+    "classifier_parameters": 181,
+    "state_size_mib": 2.8292579650878906,
+    "pretrained": false
+  },
+  "ratio_cbramod_to_simpleconv": {
+    "parameters": 34.48853737530418,
+    "state_size": 34.41543780075586
+  }
+}

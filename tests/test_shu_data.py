@@ -23,7 +23,9 @@ def test_subject_parser() -> None:
 def test_h5_dataset(tmp_path: Path) -> None:
     path = tmp_path / "tiny.h5"
     with h5py.File(path, "w") as handle:
-        handle.create_dataset("signals", data=np.ones((2, 32, 800), dtype=np.float32) * 100)
+        handle.create_dataset(
+            "signals", data=np.ones((2, 32, 800), dtype=np.float32) * 100
+        )
         handle.create_dataset("labels", data=np.array([0, 1], dtype=np.int8))
         splits = handle.create_group("splits")
         splits.create_dataset("train", data=np.array([0, 1], dtype=np.int64))

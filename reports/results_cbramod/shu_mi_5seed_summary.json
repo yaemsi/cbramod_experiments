@@ -1,0 +1,120 @@
+{
+  "num_seeds": 5,
+  "seeds": [
+    {
+      "seed": 3407,
+      "best_epoch": 5,
+      "validation_auprc": 0.7439636374626714,
+      "validation_auroc": 0.7367452085651551,
+      "validation_average_precision": 0.7441440799201718,
+      "validation_balanced_accuracy": 0.6640909066296293,
+      "validation_num_examples": 2431,
+      "test_auprc": 0.6983331807192161,
+      "test_auroc": 0.6947643640683706,
+      "test_average_precision": 0.69858174964214,
+      "test_balanced_accuracy": 0.623281692738704,
+      "test_num_examples": 2347
+    },
+    {
+      "seed": 3408,
+      "best_epoch": 26,
+      "validation_auprc": 0.739209606592112,
+      "validation_auroc": 0.7270296758962196,
+      "validation_average_precision": 0.7244959036895754,
+      "validation_balanced_accuracy": 0.6609828025460462,
+      "validation_num_examples": 2431,
+      "test_auprc": 0.6635212402067003,
+      "test_auroc": 0.6398714818725392,
+      "test_average_precision": 0.6479048141078387,
+      "test_balanced_accuracy": 0.5914150355607001,
+      "test_num_examples": 2347
+    },
+    {
+      "seed": 3409,
+      "best_epoch": 1,
+      "validation_auprc": 0.7512328825413923,
+      "validation_auroc": 0.7328959516132089,
+      "validation_average_precision": 0.751379649488487,
+      "validation_balanced_accuracy": 0.6493984816857403,
+      "validation_num_examples": 2431,
+      "test_auprc": 0.6986025338317703,
+      "test_auroc": 0.7030888501919277,
+      "test_average_precision": 0.6991660608241497,
+      "test_balanced_accuracy": 0.6353746545231148,
+      "test_num_examples": 2347
+    },
+    {
+      "seed": 3410,
+      "best_epoch": 3,
+      "validation_auprc": 0.7665364091932593,
+      "validation_auroc": 0.7460756124833157,
+      "validation_average_precision": 0.7666756666643397,
+      "validation_balanced_accuracy": 0.6634319912713174,
+      "validation_num_examples": 2431,
+      "test_auprc": 0.6850900941550528,
+      "test_auroc": 0.6769589610495236,
+      "test_average_precision": 0.6857567793605494,
+      "test_balanced_accuracy": 0.6164346059276062,
+      "test_num_examples": 2347
+    },
+    {
+      "seed": 3411,
+      "best_epoch": 8,
+      "validation_auprc": 0.7543312517226197,
+      "validation_auroc": 0.7483180229425732,
+      "validation_average_precision": 0.7545059882400895,
+      "validation_balanced_accuracy": 0.6707440227205657,
+      "validation_num_examples": 2431,
+      "test_auprc": 0.6771677802926049,
+      "test_auroc": 0.6564147959235543,
+      "test_average_precision": 0.6773840617358563,
+      "test_balanced_accuracy": 0.6081122983235566,
+      "test_num_examples": 2347
+    }
+  ],
+  "test_summary": [
+    {
+      "metric": "balanced_accuracy",
+      "ours_mean": 0.6149236574147363,
+      "ours_std_population": 0.014760981788195583,
+      "ours_std_sample": 0.016503279346520863,
+      "ours_min": 0.5914150355607001,
+      "ours_max": 0.6353746545231148,
+      "paper_mean": 0.637,
+      "paper_std": 0.0151,
+      "mean_difference": -0.022076342585263697,
+      "relative_difference_percent": -3.4656738752376293
+    },
+    {
+      "metric": "auprc",
+      "ours_mean": 0.6845429658410689,
+      "ours_std_population": 0.013299978484069297,
+      "ours_std_sample": 0.014869827994831776,
+      "ours_min": 0.6635212402067003,
+      "ours_max": 0.6986025338317703,
+      "paper_mean": 0.7139,
+      "paper_std": 0.0088,
+      "mean_difference": -0.029357034158931095,
+      "relative_difference_percent": -4.1122053731518555
+    },
+    {
+      "metric": "auroc",
+      "ours_mean": 0.674219690621183,
+      "ours_std_population": 0.023493953704246263,
+      "ours_std_sample": 0.026267038771463816,
+      "ours_min": 0.6398714818725392,
+      "ours_max": 0.7030888501919277,
+      "paper_mean": 0.6988,
+      "paper_std": 0.0068,
+      "mean_difference": -0.024580309378816945,
+      "relative_difference_percent": -3.5175027731564033
+    }
+  ],
+  "best_epoch": {
+    "mean": 8.6,
+    "sample_std": 10.064790112068904,
+    "median": 5.0,
+    "min": 1,
+    "max": 26
+  }
+}

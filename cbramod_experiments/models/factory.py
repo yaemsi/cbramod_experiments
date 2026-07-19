@@ -19,6 +19,8 @@ def build_model(config: ModelConfig) -> nn.Module:
             pretrained=config.pretrained,
             checkpoint_repo=config.checkpoint_repo,
             checkpoint_filename=config.checkpoint_filename,
+            checkpoint_path=config.checkpoint_path,
+            checkpoint_sha256=config.checkpoint_sha256,
             freeze_backbone=config.freeze_backbone,
             **config.kwargs,
         )

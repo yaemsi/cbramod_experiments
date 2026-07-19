@@ -1,7 +1,7 @@
 data:
   path: data/processed/shu_mi.h5
-  batch_size: 32
-  num_workers: 4
+  batch_size: 64
+  num_workers: 16
   pin_memory: true
   persistent_workers: true
 
@@ -14,6 +14,8 @@ model:
   pretrained: true
   checkpoint_repo: weighting666/CBraMod
   checkpoint_filename: pretrained_weights.pth
+  checkpoint_path: null
+  checkpoint_sha256: 0792cb808c14e6b7a2bb2ce1dff379bc47bc54c49a779825bdfeb33bf8157178
   classifier: all_patch_reps
   freeze_backbone: false
   kwargs:
@@ -22,12 +24,15 @@ model:
 training:
   epochs: 50
   lr: 0.0001
-  head_lr: 0.001
+  # Official code: 0.001 * sqrt(batch_size / 256) = 0.0005 for batch size 64.
+  head_lr: 0.0005
   weight_decay: 0.05
   label_smoothing: 0.0
   grad_clip_norm: 1.0
-  patience: 10
+  # Set to the full epoch count to match the released training loop (no early stopping).
+  patience: 50
   seed: 3407
-  amp: true
-  output_dir: outputs/cbramod_seed3407
+  # The released fine-tuning loop uses full precision.
+  amp: false
+  output_dir: outputs/cbramod_shu_mi
   device: auto

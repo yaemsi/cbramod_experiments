@@ -26,6 +26,24 @@ class PreprocessingSummary:
     output_path: str
 
 
+@dataclass(frozen=True)
+class SHUDatasetAudit:
+    path: str
+    examples: int
+    channels: int
+    points: int
+    split_examples: dict[str, int]
+    split_subjects: dict[str, list[int]]
+    split_class_counts: dict[str, dict[str, int]]
+    complete_subject_protocol: bool
+    paper_protocol_ready: bool
+    expected_paper_examples: int
+    warnings: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 _EXPLICIT_SUBJECT_PATTERN = re.compile(
     r"(?i)sub(?:ject)?[-_ ]*0*(?P<subject>[1-9]|1\d|2[0-5])(?:\D|$)"
 )
@@ -216,10 +234,146 @@ def preprocess_shu(
         target_points=target_points,
         output_path=str(output_path),
     )
+    audit = audit_shu_h5(output_path)
     output_path.with_suffix(".summary.json").write_text(
-        json.dumps(asdict(summary), indent=2), encoding="utf-8"
+        json.dumps(
+            {"preprocessing": asdict(summary), "audit": audit.to_dict()},
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
     )
     return summary
+
+
+def audit_shu_h5(
+    path: str | Path,
+    *,
+    require_complete_protocol: bool = False,
+) -> SHUDatasetAudit:
+    """Validate a processed SHU-MI file and summarize split integrity."""
+    path = Path(path)
+    expected_subjects = {
+        "train": set(range(1, 16)),
+        "val": set(range(16, 21)),
+        "test": set(range(21, 26)),
+    }
+    warnings: list[str] = []
+    with h5py.File(path, "r") as handle:
+        required = {
+            "signals",
+            "labels",
+            "subject_ids",
+            "session_ids",
+            "trial_ids",
+            "source_files",
+            "splits",
+        }
+        missing = required.difference(handle.keys())
+        if missing:
+            raise KeyError(f"Missing required HDF5 entries: {sorted(missing)}")
+
+        signals = handle["signals"]
+        labels = handle["labels"]
+        subjects = handle["subject_ids"]
+        if not all(isinstance(item, h5py.Dataset) for item in (signals, labels, subjects)):
+            raise TypeError("signals, labels, and subject_ids must be HDF5 datasets")
+        if signals.ndim != 3:
+            raise ValueError(f"Expected signals [examples, channels, points], got {signals.shape}")
+        examples, channels, points = map(int, signals.shape)
+        for name in ("labels", "subject_ids", "session_ids", "trial_ids", "source_files"):
+            item = handle[name]
+            if not isinstance(item, h5py.Dataset) or item.shape[0] != examples:
+                raise ValueError(f"{name} must contain {examples} rows")
+
+        all_labels = np.asarray(labels, dtype=np.int64)
+        if not np.isin(all_labels, [0, 1]).all():
+            raise ValueError("Processed labels must be encoded as 0/1")
+        all_subjects = np.asarray(subjects, dtype=np.int64)
+        seen_indices: list[np.ndarray] = []
+        split_examples: dict[str, int] = {}
+        split_subjects: dict[str, list[int]] = {}
+        split_class_counts: dict[str, dict[str, int]] = {}
+
+        for split in ("train", "val", "test"):
+            item = handle[f"splits/{split}"]
+            if not isinstance(item, h5py.Dataset):
+                raise TypeError(f"splits/{split} must be an HDF5 dataset")
+            indices = np.asarray(item, dtype=np.int64)
+            if indices.size and (indices.min() < 0 or indices.max() >= examples):
+                raise ValueError(f"Split {split} contains out-of-range indices")
+            if np.unique(indices).size != indices.size:
+                raise ValueError(f"Split {split} contains duplicate indices")
+            seen_indices.append(indices)
+            subject_values = sorted(np.unique(all_subjects[indices]).astype(int).tolist())
+            observed_subjects = set(subject_values)
+            invalid = observed_subjects.difference(expected_subjects[split])
+            if invalid:
+                raise ValueError(
+                    f"Subject leakage in {split}: subjects {sorted(invalid)} belong to another split"
+                )
+            split_labels = all_labels[indices]
+            counts = np.bincount(split_labels, minlength=2) if indices.size else np.array([0, 0])
+            split_examples[split] = int(indices.size)
+            split_subjects[split] = subject_values
+            split_class_counts[split] = {"0": int(counts[0]), "1": int(counts[1])}
+            if indices.size and (counts == 0).any():
+                warnings.append(f"Split {split} does not contain both classes")
+            missing_subjects = expected_subjects[split].difference(observed_subjects)
+            if missing_subjects:
+                warnings.append(
+                    f"Split {split} is missing subjects {sorted(missing_subjects)}"
+                )
+
+        concatenated = np.concatenate(seen_indices) if seen_indices else np.empty(0, dtype=np.int64)
+        if np.unique(concatenated).size != concatenated.size:
+            raise ValueError("Train/validation/test splits overlap")
+        if set(concatenated.tolist()) != set(range(examples)):
+            raise ValueError("Train/validation/test splits do not cover every example exactly once")
+
+    complete = all(
+        set(split_subjects[name]) == expected_subjects[name]
+        for name in expected_subjects
+    )
+    if examples != 11_988:
+        warnings.append(
+            f"Paper reports 11,988 examples; processed file contains {examples}"
+        )
+    if channels != 32:
+        warnings.append(f"Paper protocol uses 32 channels; processed file contains {channels}")
+    if points != 800:
+        warnings.append(f"Paper protocol uses 800 points; processed file contains {points}")
+    both_classes = all(
+        counts["0"] > 0 and counts["1"] > 0
+        for counts in split_class_counts.values()
+    )
+    paper_protocol_ready = (
+        complete
+        and examples == 11_988
+        and channels == 32
+        and points == 800
+        and both_classes
+    )
+    if require_complete_protocol and not paper_protocol_ready:
+        raise ValueError(
+            "Dataset does not satisfy the complete paper protocol: expected all 25 "
+            "subjects in the prescribed splits, 11,988 examples, 32 channels, 800 "
+            "points, and both classes in every split"
+        )
+
+    return SHUDatasetAudit(
+        path=str(path),
+        examples=examples,
+        channels=channels,
+        points=points,
+        split_examples=split_examples,
+        split_subjects=split_subjects,
+        split_class_counts=split_class_counts,
+        complete_subject_protocol=complete,
+        paper_protocol_ready=paper_protocol_ready,
+        expected_paper_examples=11_988,
+        warnings=warnings,
+    )
 
 
 class SHUH5Dataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):

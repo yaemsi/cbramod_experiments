@@ -1,0 +1,159 @@
+{
+  "models": {
+    "cbramod": {
+      "test": {
+        "balanced_accuracy": {
+          "mean": 0.6149236574147363,
+          "std_population": 0.014760981788195583,
+          "std_sample": 0.016503279346520863,
+          "min": 0.5914150355607001,
+          "max": 0.6353746545231148
+        },
+        "auprc": {
+          "mean": 0.6845429658410689,
+          "std_population": 0.013299978484069297,
+          "std_sample": 0.014869827994831776,
+          "min": 0.6635212402067003,
+          "max": 0.6986025338317703
+        },
+        "auroc": {
+          "mean": 0.674219690621183,
+          "std_population": 0.023493953704246263,
+          "std_sample": 0.026267038771463816,
+          "min": 0.6398714818725392,
+          "max": 0.7030888501919277
+        },
+        "average_precision": {
+          "mean": 0.6817586931341069,
+          "std_population": 0.01880020690651382,
+          "std_sample": 0.021019270317012964,
+          "min": 0.6479048141078387,
+          "max": 0.6991660608241497
+        }
+      }
+    },
+    "eegsimpleconv": {
+      "test": {
+        "balanced_accuracy": {
+          "mean": 0.5270946828148215,
+          "std_population": 0.025702543297182048,
+          "std_sample": 0.02873631700356532,
+          "min": 0.4990792124216278,
+          "max": 0.5680242716120028
+        },
+        "auprc": {
+          "mean": 0.5860970469944476,
+          "std_population": 0.035586569754198855,
+          "std_sample": 0.03978699452821331,
+          "min": 0.5521967275214117,
+          "max": 0.6379333806414345
+        },
+        "auroc": {
+          "mean": 0.6111426189580577,
+          "std_population": 0.03774805139536503,
+          "std_sample": 0.042203604469096004,
+          "min": 0.5710259084063258,
+          "max": 0.6590551615662683
+        },
+        "average_precision": {
+          "mean": 0.5869413736492428,
+          "std_population": 0.035618630869238825,
+          "std_sample": 0.03982283994454522,
+          "min": 0.5528006743778862,
+          "max": 0.6388300237340084
+        }
+      }
+    }
+  },
+  "paired_seed_comparison": {
+    "balanced_accuracy": {
+      "cbramod_mean": 0.6149236574147363,
+      "cbramod_std_population": 0.014760981788195583,
+      "eegsimpleconv_mean": 0.5270946828148215,
+      "eegsimpleconv_std_population": 0.025702543297182048,
+      "cbramod_minus_eegsimpleconv": 0.08782897459991486,
+      "paired_difference_std_sample": 0.040159282373731266,
+      "cbramod_seed_wins": 5,
+      "num_seeds": 5,
+      "relative_simpleconv_deficit_vs_cbramod_percent": -14.282907079744762
+    },
+    "auprc": {
+      "cbramod_mean": 0.6845429658410689,
+      "cbramod_std_population": 0.013299978484069297,
+      "eegsimpleconv_mean": 0.5860970469944476,
+      "eegsimpleconv_std_population": 0.035586569754198855,
+      "cbramod_minus_eegsimpleconv": 0.09844591884662135,
+      "paired_difference_std_sample": 0.027422759547775195,
+      "cbramod_seed_wins": 5,
+      "num_seeds": 5,
+      "relative_simpleconv_deficit_vs_cbramod_percent": -14.381262208379415
+    },
+    "auroc": {
+      "cbramod_mean": 0.674219690621183,
+      "cbramod_std_population": 0.023493953704246263,
+      "eegsimpleconv_mean": 0.6111426189580577,
+      "eegsimpleconv_std_population": 0.03774805139536503,
+      "cbramod_minus_eegsimpleconv": 0.06307707166312541,
+      "paired_difference_std_sample": 0.024065484199533076,
+      "cbramod_seed_wins": 5,
+      "num_seeds": 5,
+      "relative_simpleconv_deficit_vs_cbramod_percent": -9.355566522391268
+    }
+  },
+  "complexity": {
+    "cbramod": {
+      "parameters": 25525001,
+      "backbone_parameters": 4883800,
+      "classifier_parameters": 20641201,
+      "classifier_fraction": 0.8086660212079914,
+      "state_size_mib": 97.37015151977539,
+      "pretrained": true
+    },
+    "eegsimpleconv": {
+      "parameters": 740101,
+      "classifier_parameters": 181,
+      "state_size_mib": 2.8292579650878906,
+      "pretrained": false
+    },
+    "ratio_cbramod_to_simpleconv": {
+      "parameters": 34.48853737530418,
+      "state_size": 34.41543780075586
+    }
+  },
+  "validation_test_gap": {
+    "cbramod": {
+      "balanced_accuracy": 0.04680598355592343,
+      "auprc": 0.06651179166134202,
+      "auroc": 0.06399320367891141
+    },
+    "eegsimpleconv": {
+      "balanced_accuracy": 0.06168622562877102,
+      "auprc": 0.1087312650176298,
+      "auroc": 0.0873445492829666
+    }
+  },
+  "fixed_threshold_behavior": {
+    "cbramod_predicted_positive_rates": {
+      "3407": 0.40690242863229653,
+      "3408": 0.49467405198125264,
+      "3409": 0.5867064337452067,
+      "3410": 0.5257775884107371,
+      "3411": 0.4737963357477631
+    },
+    "eegsimpleconv_predicted_positive_rates": {
+      "3407": 0.9872177247550064,
+      "3408": 0.815935236472092,
+      "3409": 0.017895185342991053,
+      "3410": 0.5943757988922028,
+      "3411": 0.9233063485300383
+    },
+    "cbramod_range": [
+      0.40690242863229653,
+      0.5867064337452067
+    ],
+    "eegsimpleconv_range": [
+      0.017895185342991053,
+      0.9872177247550064
+    ]
+  }
+}
