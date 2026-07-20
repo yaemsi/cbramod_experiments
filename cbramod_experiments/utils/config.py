@@ -10,6 +10,7 @@ import yaml
 @dataclass(frozen=True)
 class DataConfig:
     path: str
+    backend: Literal["hdf5", "arrow"] = "hdf5"
     batch_size: int = 64
     num_workers: int = 4
     pin_memory: bool = True
@@ -83,6 +84,8 @@ def load_config(path: str | Path) -> ExperimentConfig:
 def _validate_config(config: ExperimentConfig) -> None:
     if config.model.num_classes != 2:
         raise ValueError("The SHU-MI experiments currently support exactly two classes")
+    if config.data.backend not in {"hdf5", "arrow"}:
+        raise ValueError("data.backend must be 'hdf5' or 'arrow'")
     if config.data.batch_size <= 0:
         raise ValueError("batch_size must be positive")
     if config.training.epochs <= 0:

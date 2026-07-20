@@ -198,8 +198,6 @@ def _build_optimizer(
     if head_lr is None or not isinstance(backbone_module, torch.nn.Module):
         return optimizer_type(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    # Keep the narrowing explicit for static type checkers.
-    assert isinstance(backbone_module, torch.nn.Module)
     backbone = [p for p in backbone_module.parameters() if p.requires_grad]
     head = [
         p

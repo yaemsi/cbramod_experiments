@@ -276,8 +276,6 @@ def audit_shu_h5(
         signals = handle["signals"]
         labels = handle["labels"]
         subjects = handle["subject_ids"]
-        # Check each object separately so static type checkers narrow the HDF5
-        # union returned by ``handle[name]`` to ``h5py.Dataset``.
         if not isinstance(signals, h5py.Dataset):
             raise TypeError("signals must be an HDF5 dataset")
         if not isinstance(labels, h5py.Dataset):

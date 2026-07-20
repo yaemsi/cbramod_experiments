@@ -1,4 +1,5 @@
 data:
+  backend: hdf5
   path: data/processed/shu_mi.h5
   batch_size: 64
   num_workers: 16

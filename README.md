@@ -1,245 +1,183 @@
-# CBraMod vs EEGSimpleConv on SHU-MI
+# CBraMod Homework: SHU-MI Reproduction, Model Comparison, and EEG Data Harmonization
 
-A reproducible implementation for the CBraMod take-home assessment. Both models
-share the same SHU-MI preprocessing, subject split, data loader, training
-infrastructure, and metric implementation.
+This repository contains the implementation for the CBraMod take-home assessment:
+
+- review and improve the original CBraMod data pipeline;
+- reproduce CBraMod results on SHU-MI using the released pretrained weights;
+- compare CBraMod with EEGSimpleConv under a shared evaluation protocol;
+- prototype a generalized EEG ingestion and streaming pipeline for SHU-MI and HBN/BIDS data.
+
+The validated SHU-MI path is preserved in HDF5, while an integrated Parquet/Arrow backend demonstrates how the same training code can consume harmonized data from heterogeneous EEG sources.
+
+## Documentation
+
+- [`DESIGN.md`](DESIGN.md): package architecture, principal functions, data contracts, tests, outputs, and Makefile reference.
+- [`reports/part1.md`](reports/part1.md): code review, CBraMod reproduction, and EEGSimpleConv comparison protocol/results.
+- [`reports/part2.md`](reports/part2.md): large-scale data-harmonization design and implemented prototype.
+- [`notebooks/shu_mi_data_exploration.ipynb`](notebooks/shu_mi_data_exploration.ipynb): executable exploration of raw and processed SHU-MI data.
 
 ## Environment
 
-The project intentionally keeps Python 3.13 and the current PyTorch/CUDA stack
-specified in `pyproject.toml`.
+The project intentionally uses the Python 3.13 and current PyTorch/CUDA stack declared in `pyproject.toml`.
 
 ```bash
 uv sync
-make test
-make smoke
+make check
 ```
 
-## Reproduce CBraMod on SHU-MI
+Useful discovery commands:
 
-### 1. Prepare the data
+```bash
+make help
+python -m main --help
+```
 
-Download and extract the password-protected SHU-MI archive. Point `RAW_DIR` at
-the directory containing the `.mat` files; recursive discovery is supported.
+## Quick start
+
+### 1. Preprocess and validate full SHU-MI
+
+`RAW_DIR` may point directly to the MAT directory or to a parent directory; discovery is recursive.
 
 ```bash
 make preprocess \
   RAW_DIR=/absolute/path/to/shu/mat_files \
   DATASET=data/processed/shu_mi.h5 \
   OVERWRITE=1
-```
 
-The preprocessor expects:
-
-- `data`: `[trials, channels, time]`;
-- `labels`: `1/2` or `0/1`;
-- filenames containing explicit subject IDs such as `sub-001`.
-
-It resamples each four-second trial from 1,000 to 800 points with
-`scipy.signal.resample`, maps labels to `0/1`, and assigns subjects 1–15 to
-train, 16–20 to validation, and 21–25 to test.
-
-### 2. Refuse invalid reproduction data
-
-```bash
 make inspect-data DATASET=data/processed/shu_mi.h5
 ```
 
-Strict inspection verifies all 25 subjects, exactly 11,988 examples, 32
-channels, 800 points, both classes in every split, complete split coverage, and
-no subject leakage. Training targets use strict inspection by default.
+Strict validation checks the paper protocol: 25 subjects, 11,988 examples, 32 channels, 800 samples per trial, class coverage, subject-disjoint splits, and complete sample coverage.
 
-The repository includes one real subject-1 file only for pipeline validation:
-
-```bash
-make sample-preprocess
-make sample-inspect
-```
-
-Warnings are expected for this incomplete sample; it cannot produce a reported
-reproduction result.
-
-### 3. Validate the released checkpoint
+### 2. Validate the CBraMod checkpoint
 
 ```bash
 make check-checkpoint
 ```
 
-This downloads the Hugging Face checkpoint, verifies its published SHA256, maps
-the authors' state-dict names to the cleaned implementation, and requires a
-complete architecture match.
-
-A local checkpoint can be used instead:
+To use a local checkpoint:
 
 ```bash
 make check-checkpoint CHECKPOINT=/absolute/path/pretrained_weights.pth
 ```
 
-### 4. Run one seed
+### 3. Train or reproduce CBraMod
+
+One seed:
 
 ```bash
 make train-cbramod \
   DATASET=data/processed/shu_mi.h5 \
-  OUTPUT_DIR=outputs/cbramod_shu_mi
+  DATA_BACKEND=hdf5
 ```
 
-### 5. Run five seeds and aggregate
+Five seeds and aggregation:
 
 ```bash
 make reproduce-cbramod \
   DATASET=data/processed/shu_mi.h5 \
-  OUTPUT_DIR=outputs/cbramod_shu_mi
+  DATA_BACKEND=hdf5
 ```
 
-Default seeds are `3407 3408 3409 3410 3411`. Override them with:
+Default seeds are `3407 3408 3409 3410 3411`. Each run writes its resolved configuration, runtime manifest, training history, best checkpoint, and final metrics. The aggregate is written to `outputs/cbramod_shu_mi/summary.json`.
 
-```bash
-make reproduce-cbramod REPRO_SEEDS="1 2 3 4 5"
-```
-
-The final `summary.json` reports mean, sample standard deviation, range, every
-individual run, the paper reference values, and the difference from the paper
-mean.
-
-## Paper-aligned CBraMod settings
-
-`configs/cbramod.yaml` uses:
-
-- 50 epochs and batch size 64;
-- AdamW with weight decay 0.05;
-- backbone LR `1e-4`;
-- classifier LR `5e-4`;
-- cosine annealing to `1e-6` after every optimizer step;
-- gradient norm clipping at 1.0;
-- full-precision training;
-- the released pretrained backbone;
-- the three-layer `all_patch_reps` classifier;
-- checkpoint selection by validation AUROC.
-
-AUC-PR is calculated with trapezoidal integration of the precision-recall
-curve, matching the released evaluator. Average precision is retained as a
-separate diagnostic metric.
-
-See [`reports/shu_mi_reproduction.md`](reports/shu_mi_reproduction.md) for the
-reference values, deviations, and reporting checklist.
-
-## Outputs
-
-Each seed writes:
-
-```text
-resolved_config.json
-run.json
-history.json
-best_model.pt
-metrics.json
-```
-
-The test split is evaluated only once after validation-based model selection.
-
-## Development commands
-
-```bash
-make help
-make test
-make test-verbose
-make smoke
-make format
-make lint
-make typecheck
-make check
-```
-
-## Task C: compare EEGSimpleConv with CBraMod
-
-The comparison reuses the exact SHU-MI HDF5 file and subject split from Task B.
-EEGSimpleConv consumes `[batch, 32, 800]` directly; its internal resampler
-reduces 200 Hz signals to 80 Hz before the convolutional stack.
-
-The implementation follows the public architecture defaults for cross-subject
-motor-imagery decoding:
-
-- 128 initial feature maps;
-- two convolutional blocks;
-- 80 Hz internal resampling;
-- kernel size 8;
-- ReLU activation;
-- global temporal average pooling;
-- one binary classification logit.
-
-The controlled comparison deliberately does **not** add EEGSimpleConv's broader
-training-pipeline enhancements such as Euclidean alignment, test-subject batch
-normalization statistics, mixup, or a subject-classification auxiliary head.
-Those techniques would change more than the architecture and would make it
-harder to attribute differences to CBraMod pretraining versus the convolutional
-baseline.
-
-### Run five EEGSimpleConv seeds
+### 4. Run EEGSimpleConv and compare models
 
 ```bash
 make reproduce-simpleconv \
   DATASET=data/processed/shu_mi.h5 \
-  SIMPLECONV_OUTPUT_DIR=outputs/eegsimpleconv_shu_mi
+  DATA_BACKEND=hdf5
+
+make benchmark-models BENCHMARK_DEVICE=cuda
+make compare-models
 ```
 
-The baseline uses Adam for 50 epochs with learning rate `1e-3`, followed by a
-10× decay at epoch 40. Checkpoints are still selected with validation AUROC and
-are evaluated with the same balanced accuracy, AUC-PR, and AUROC code used for
-CBraMod.
-
-### Benchmark both architectures
-
-Run the benchmarks on the same idle GPU. Random initialization is intentional:
-weights do not affect architecture latency or parameter count, and this avoids
-downloading the CBraMod checkpoint during profiling.
+Or run the complete sequence:
 
 ```bash
-make benchmark-models \
-  BENCHMARK_DEVICE=cuda \
-  BENCHMARK_BATCHES="1 64" \
-  BENCHMARK_WARMUP=20 \
-  BENCHMARK_ITERATIONS=100
+make task-c
 ```
 
-The benchmark JSON files contain parameter count, state size, mean/median/p95
-latency, throughput, and peak allocated CUDA memory.
+### 5. Build and use the harmonized Arrow backend
 
-### Generate the final comparison
+Build Arrow shards and a Parquet manifest from the same SHU-MI MAT files:
 
 ```bash
-make compare-models \
-  CBRAMOD_SUMMARY=outputs/cbramod_shu_mi/summary.json \
-  SIMPLECONV_SUMMARY=outputs/eegsimpleconv_shu_mi/summary.json
+make harmonize-shu \
+  RAW_DIR=/absolute/path/to/shu/mat_files \
+  HARMONIZED_SHU_DIR=data/harmonized/shu_mi \
+  OVERWRITE=1
 ```
 
-This writes:
+Validate exact parity with the HDF5 reference:
 
-```text
-reports/task_c/comparison.json
-reports/task_c/comparison.md
+```bash
+make compare-backends \
+  DATASET=data/processed/shu_mi.h5 \
+  HARMONIZED_SHU_MANIFEST=data/harmonized/shu_mi/manifest.parquet
 ```
 
-The complete workflow can also be launched with `make task-c`, although running
-seeds sequentially is recommended on a personal GPU to limit sustained heat.
+Train directly from Arrow without changing model code:
 
-## Explore the SHU-MI data
+```bash
+make train-cbramod \
+  DATASET=data/harmonized/shu_mi/manifest.parquet \
+  DATA_BACKEND=arrow
 
-The executed notebook [`notebooks/shu_mi_data_exploration.ipynb`](notebooks/shu_mi_data_exploration.ipynb)
-explains the raw MATLAB hierarchy, class and subject distributions, signal and
-spectral characteristics, HDF5 preprocessing, and the model-specific tensor
-views. It runs immediately on the bundled subject-1 sample.
+make train-simpleconv \
+  DATASET=data/harmonized/shu_mi/manifest.parquet \
+  DATA_BACKEND=arrow
+```
+
+### 6. Harmonize a small HBN/BIDS subset
+
+Preserve the selected subjects' BIDS directory hierarchy and sidecars. The reader supports EDF, BDF, and EEGLAB SET/FDT recordings.
+
+```bash
+make harmonize-hbn \
+  HBN_ROOT=/absolute/path/to/hbn_subset \
+  HBN_LIMIT_RECORDINGS=3 \
+  HBN_TARGET_RATE=200 \
+  HBN_WINDOW_SECONDS=4 \
+  HBN_STRIDE_SECONDS=4 \
+  OVERWRITE=1
+```
+
+The HBN path validates generalized ingestion. HBN examples are not mixed into the supervised SHU-MI motor-imagery comparison.
+
+## Bundled sample and notebook
+
+The repository includes one real SHU-MI subject/session in MAT, EDF, and event-TSV forms. It supports fast local validation without downloading the full dataset:
+
+```bash
+make sample-compare-backends
+make sample-harmonize-edf
+make sample-harmonize-bids
+```
+
+Launch the data-exploration notebook:
 
 ```bash
 make explore-data
 ```
 
-To use the full archive, launch Jupyter with the data locations configured:
+## Main Makefile workflows
 
-```bash
-SHU_RAW_DIR=/absolute/path/to/shu/mat_files \
-SHU_PROCESSED_PATH=data/processed/shu_mi.h5 \
-make explore-data
-```
+| Workflow | Command |
+|---|---|
+| Install environment | `make sync` |
+| Run all quality checks | `make check` |
+| Preprocess SHU-MI to HDF5 | `make preprocess` |
+| Audit SHU-MI | `make inspect-data` |
+| Validate/download checkpoint | `make check-checkpoint` |
+| Run one CBraMod seed | `make train-cbramod` |
+| Run five CBraMod seeds | `make reproduce-cbramod` |
+| Run five EEGSimpleConv seeds | `make reproduce-simpleconv` |
+| Benchmark both models | `make benchmark-models` |
+| Build final model comparison | `make compare-models` |
+| Build SHU-MI Arrow backend | `make harmonize-shu` |
+| Compare HDF5 and Arrow | `make compare-backends` |
+| Harmonize HBN subset | `make harmonize-hbn` |
+| Show every target and variable | `make help` |
 
-An optional HBN section activates when `HBN_ROOT` points to a BIDS directory
-containing `_eeg.set`, `_eeg.bdf`, or `_eeg.edf` files.
+The complete target-by-target reference is in [`DESIGN.md`](DESIGN.md#makefile-reference).

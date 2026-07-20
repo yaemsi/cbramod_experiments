@@ -8,7 +8,16 @@ from typing import Any
 
 import torch
 
-from cbramod_experiments.datasets import SHUDataModule, audit_shu_h5, preprocess_shu
+from cbramod_experiments.datasets import audit_shu_h5, preprocess_shu
+from cbramod_experiments.data_harmonization import (
+    EEGDataModule,
+    audit_arrow_shu,
+    compare_hdf5_and_arrow,
+    harmonize_bids,
+    harmonize_shu_edf,
+    harmonize_shu_mat,
+    summarize_manifest,
+)
 from cbramod_experiments.models import CBraModClassifier, EEGSimpleConv, build_model
 from cbramod_experiments.utils import (
     CBRAMOD_PAPER_REFERENCE,
@@ -96,6 +105,60 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--cbramod-benchmark")
     compare_parser.add_argument("--simpleconv-benchmark")
 
+    harmonize_shu_parser = subparsers.add_parser(
+        "harmonize-shu",
+        help="Build Parquet/Arrow training data from SHU-MI MAT or EDF files",
+    )
+    harmonize_shu_parser.add_argument("--raw-dir", required=True)
+    harmonize_shu_parser.add_argument("--output-dir", required=True)
+    harmonize_shu_parser.add_argument("--source", choices=["mat", "edf"], default="mat")
+    harmonize_shu_parser.add_argument("--events-root")
+    harmonize_shu_parser.add_argument(
+        "--target-sampling-rate", type=float, default=200.0
+    )
+    harmonize_shu_parser.add_argument("--records-per-batch", type=int, default=256)
+    harmonize_shu_parser.add_argument("--batches-per-shard", type=int, default=16)
+    harmonize_shu_parser.add_argument("--overwrite", action="store_true")
+
+    harmonize_bids_parser = subparsers.add_parser(
+        "harmonize-bids",
+        help="Build Parquet/Arrow data from a BIDS-like EDF/BDF/SET subset",
+    )
+    harmonize_bids_parser.add_argument("--root", required=True)
+    harmonize_bids_parser.add_argument("--output-dir", required=True)
+    harmonize_bids_parser.add_argument("--dataset-id", default="hbn")
+    harmonize_bids_parser.add_argument("--target-sampling-rate", type=float)
+    harmonize_bids_parser.add_argument("--window-seconds", type=float, default=4.0)
+    harmonize_bids_parser.add_argument("--stride-seconds", type=float, default=4.0)
+    harmonize_bids_parser.add_argument(
+        "--channel-policy", choices=["preserve", "select"], default="preserve"
+    )
+    harmonize_bids_parser.add_argument("--channels", nargs="+")
+    harmonize_bids_parser.add_argument("--allow-missing-channels", action="store_true")
+    harmonize_bids_parser.add_argument("--subjects", nargs="+")
+    harmonize_bids_parser.add_argument("--tasks", nargs="+")
+    harmonize_bids_parser.add_argument("--limit-recordings", type=int)
+    harmonize_bids_parser.add_argument("--records-per-batch", type=int, default=256)
+    harmonize_bids_parser.add_argument("--batches-per-shard", type=int, default=16)
+    harmonize_bids_parser.add_argument("--overwrite", action="store_true")
+
+    inspect_harmonized_parser = subparsers.add_parser(
+        "inspect-harmonized", help="Inspect a Parquet/Arrow harmonized dataset"
+    )
+    inspect_harmonized_parser.add_argument("--manifest", required=True)
+    inspect_harmonized_parser.add_argument(
+        "--strict-shu",
+        action="store_true",
+        help="Additionally require the full SHU-MI paper protocol",
+    )
+
+    parity_parser = subparsers.add_parser(
+        "compare-backends", help="Compare HDF5 and Arrow SHU-MI samples"
+    )
+    parity_parser.add_argument("--hdf5", required=True)
+    parity_parser.add_argument("--manifest", required=True)
+    parity_parser.add_argument("--max-examples-per-split", type=int)
+
     subparsers.add_parser("smoke", help="Run CPU-friendly model and metric smoke tests")
     return parser
 
@@ -106,6 +169,7 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int)
     parser.add_argument("--output-dir")
     parser.add_argument("--checkpoint-path")
+    parser.add_argument("--data-backend", choices=["hdf5", "arrow"])
 
 
 def main() -> None:
@@ -135,6 +199,59 @@ def main() -> None:
             simpleconv_benchmark_path=args.simpleconv_benchmark,
         )
         print(result["metrics"])
+    elif args.command == "harmonize-shu":
+        if args.source == "mat":
+            summary = harmonize_shu_mat(
+                args.raw_dir,
+                args.output_dir,
+                target_sampling_rate_hz=args.target_sampling_rate,
+                records_per_batch=args.records_per_batch,
+                batches_per_shard=args.batches_per_shard,
+                overwrite=args.overwrite,
+            )
+        else:
+            summary = harmonize_shu_edf(
+                args.raw_dir,
+                args.output_dir,
+                events_root=args.events_root,
+                target_sampling_rate_hz=args.target_sampling_rate,
+                records_per_batch=args.records_per_batch,
+                batches_per_shard=args.batches_per_shard,
+                overwrite=args.overwrite,
+            )
+        print(summary)
+    elif args.command == "harmonize-bids":
+        summary = harmonize_bids(
+            args.root,
+            args.output_dir,
+            dataset_id=args.dataset_id,
+            target_sampling_rate_hz=args.target_sampling_rate,
+            window_seconds=args.window_seconds,
+            stride_seconds=args.stride_seconds,
+            channel_policy=args.channel_policy,
+            channels=args.channels,
+            allow_missing_channels=args.allow_missing_channels,
+            subjects=args.subjects,
+            tasks=args.tasks,
+            limit_recordings=args.limit_recordings,
+            records_per_batch=args.records_per_batch,
+            batches_per_shard=args.batches_per_shard,
+            overwrite=args.overwrite,
+        )
+        print(summary)
+    elif args.command == "inspect-harmonized":
+        summary = summarize_manifest(args.manifest)
+        print(summary)
+        if args.strict_shu:
+            audit = audit_arrow_shu(args.manifest, require_complete_protocol=True)
+            print_audit(audit.to_dict())
+    elif args.command == "compare-backends":
+        summary = compare_hdf5_and_arrow(
+            args.hdf5,
+            args.manifest,
+            max_examples_per_split=args.max_examples_per_split,
+        )
+        print(summary)
     elif args.command == "smoke":
         run_smoke_test()
 
@@ -142,6 +259,8 @@ def main() -> None:
 def _load_with_overrides(args: argparse.Namespace) -> ExperimentConfig:
     config = load_config(args.config)
     data = replace(config.data, path=args.data) if args.data else config.data
+    if getattr(args, "data_backend", None):
+        data = replace(data, backend=args.data_backend)
     model = (
         replace(config.model, checkpoint_path=args.checkpoint_path)
         if args.checkpoint_path
@@ -156,13 +275,16 @@ def _load_with_overrides(args: argparse.Namespace) -> ExperimentConfig:
 
 
 def execute_training(config: ExperimentConfig, *, strict_data: bool) -> FitResult:
-    audit = audit_shu_h5(config.data.path, require_complete_protocol=strict_data)
+    audit = _audit_training_data(
+        config.data.path, config.data.backend, require_complete_protocol=strict_data
+    )
     print_audit(audit.to_dict())
     seed_everything(config.training.seed)
     device = resolve_device(config.training.device)
     model = build_model(config.model)
-    data = SHUDataModule(
+    data = EEGDataModule(
         config.data.path,
+        backend=config.data.backend,
         batch_size=config.data.batch_size,
         num_workers=config.data.num_workers,
         pin_memory=config.data.pin_memory,
@@ -207,7 +329,9 @@ def execute_training(config: ExperimentConfig, *, strict_data: bool) -> FitResul
 def run_reproduction(args: argparse.Namespace) -> None:
     base = _load_with_overrides(args)
     strict = not args.allow_incomplete_data
-    audit_shu_h5(base.data.path, require_complete_protocol=strict)
+    _audit_training_data(
+        base.data.path, base.data.backend, require_complete_protocol=strict
+    )
     output_root = Path(args.output_dir or base.training.output_dir)
     runs: list[ReproductionRun] = []
     for seed in args.seeds:
@@ -268,6 +392,16 @@ def run_benchmark(args: argparse.Namespace) -> None:
         output_path=args.output,
     )
     print(result.to_dict())
+
+
+def _audit_training_data(path: str, backend: str, *, require_complete_protocol: bool):
+    if backend == "hdf5":
+        return audit_shu_h5(path, require_complete_protocol=require_complete_protocol)
+    if backend == "arrow":
+        return audit_arrow_shu(
+            path, require_complete_protocol=require_complete_protocol
+        )
+    raise ValueError(f"Unsupported data backend: {backend}")
 
 
 def print_audit(audit: dict[str, Any]) -> None:

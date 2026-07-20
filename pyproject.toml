@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cbramod-experiments"
 version = "0.1.0"
-description = "Add your description here"
+description = "Reproducible CBraMod and EEGSimpleConv experiments with harmonized EEG data pipelines"
 readme = "README.md"
 requires-python = ">=3.13"
 
@@ -21,6 +21,7 @@ dependencies = [
     "deepspeed",
     "numpy",
     "pandas",
+    "pyarrow",
     "pyyaml",
     "scipy",
     "requests",
@@ -73,9 +74,3 @@ no-build-isolation-package = ["flash-attn-3"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-
-[tool.ruff.lint.per-file-ignores]
-# The exploration notebook adds the repository root to sys.path before
-# importing the local package, so these imports are intentionally not at the
-# top of that cell.
-"notebooks/*.ipynb" = ["E402"]

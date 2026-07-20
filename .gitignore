@@ -217,6 +217,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Temporary folders
+# Data, generated experiment data and outputs
 resources/
 outputs/
