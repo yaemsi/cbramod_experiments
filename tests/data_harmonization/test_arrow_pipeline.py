@@ -17,11 +17,11 @@ from cbramod_experiments.data_harmonization import (
 from cbramod_experiments.datasets import preprocess_shu
 
 
-RESOURCE_ROOT = Path("resources/shu-mi_dataset")
-
-
-def test_shu_mat_arrow_roundtrip_and_hdf5_parity(tmp_path: Path) -> None:
-    raw_dir = RESOURCE_ROOT / "mat_files"
+def test_shu_mat_arrow_roundtrip_and_hdf5_parity(
+    tmp_path: Path,
+    synthetic_shu_mat_root: Path,
+) -> None:
+    raw_dir = synthetic_shu_mat_root / "mat_files"
     hdf5_path = tmp_path / "shu.h5"
     arrow_dir = tmp_path / "shu_arrow"
 
@@ -61,10 +61,13 @@ def test_shu_mat_arrow_roundtrip_and_hdf5_parity(tmp_path: Path) -> None:
     assert manifest[0]["channel_names"][0] == "Fp1"
 
 
-def test_arrow_data_module_returns_training_batches(tmp_path: Path) -> None:
+def test_arrow_data_module_returns_training_batches(
+    tmp_path: Path,
+    synthetic_shu_mat_root: Path,
+) -> None:
     output_dir = tmp_path / "shu_arrow"
     harmonize_shu_mat(
-        RESOURCE_ROOT / "mat_files",
+        synthetic_shu_mat_root / "mat_files",
         output_dir,
         records_per_batch=32,
         overwrite=True,
@@ -84,10 +87,13 @@ def test_arrow_data_module_returns_training_batches(tmp_path: Path) -> None:
     assert np.isfinite(signals.numpy()).all()
 
 
-def test_block_shuffle_sampler_visits_each_example_once(tmp_path: Path) -> None:
+def test_block_shuffle_sampler_visits_each_example_once(
+    tmp_path: Path,
+    synthetic_shu_mat_root: Path,
+) -> None:
     output_dir = tmp_path / "shu_arrow"
     harmonize_shu_mat(
-        RESOURCE_ROOT / "mat_files",
+        synthetic_shu_mat_root / "mat_files",
         output_dir,
         records_per_batch=10,
         batches_per_shard=2,

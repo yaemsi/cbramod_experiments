@@ -145,11 +145,28 @@ make harmonize-hbn \
 
 The HBN path validates generalized ingestion. HBN examples are not mixed into the supervised SHU-MI motor-imagery comparison.
 
-## Bundled sample and notebook
+## Local data, staged sample, and notebook
 
-The repository includes one real SHU-MI subject/session in MAT, EDF, and event-TSV forms. It supports fast local validation without downloading the full dataset:
+Large EEG files are not committed to the repository. By default, the full
+SHU-MI archive is expected below:
+
+```text
+resources/data/shu-mi_dataset/
+├── mat_files/
+├── edf_files/
+├── events/
+└── preprocessed/        # generated
+```
+
+Override the location with `SHU_ROOT=/absolute/path/to/shu-mi_dataset` in
+Makefile commands or `SHU_MI_ROOT` when invoking pytest directly.
+
+The sample workflows first stage only `sub-001`, session 01 from the full local
+archive. They therefore remain 100-trial checks even when the source directory
+contains all 11,988 examples:
 
 ```bash
+make stage-sample
 make sample-compare-backends
 make sample-harmonize-edf
 make sample-harmonize-bids
@@ -161,12 +178,35 @@ Launch the data-exploration notebook:
 make explore-data
 ```
 
+
+## Testing
+
+Fast tests are self-contained and do not scan the complete local EEG archive:
+
+```bash
+make test
+```
+
+Tests that compare real MAT and EDF files or audit a complete generated manifest
+are marked as integration tests:
+
+```bash
+make test-integration SHU_ROOT=/absolute/path/to/shu-mi_dataset
+```
+
+To audit a non-default full Arrow manifest directly:
+
+```bash
+SHU_MI_MANIFEST=/absolute/path/to/manifest.parquet uv run pytest -m integration
+```
+
 ## Main Makefile workflows
 
 | Workflow | Command |
 |---|---|
 | Install environment | `make sync` |
-| Run all quality checks | `make check` |
+| Run all fast quality checks | `make check` |
+| Run real-data integration tests | `make test-integration` |
 | Preprocess SHU-MI to HDF5 | `make preprocess` |
 | Audit SHU-MI | `make inspect-data` |
 | Validate/download checkpoint | `make check-checkpoint` |

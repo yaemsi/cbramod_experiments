@@ -220,3 +220,6 @@ __marimo__/
 # Data, generated experiment data and outputs
 resources/
 outputs/
+
+# Locally staged/generated datasets
+data/

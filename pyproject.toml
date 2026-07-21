@@ -74,3 +74,6 @@ no-build-isolation-package = ["flash-attn-3"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "integration: tests requiring real local EEG files or full generated datasets",
+]

@@ -3,23 +3,24 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from cbramod_experiments.data_harmonization.readers import SHUEdfReader, SHUMatReader
 
 
-RESOURCE_ROOT = Path("resources/shu-mi_dataset")
-
-
-def test_edf_and_mat_reconstruct_the_same_shu_trials() -> None:
+@pytest.mark.integration
+def test_edf_and_mat_reconstruct_the_same_shu_trials(
+    shu_single_session_root: Path,
+) -> None:
     mat_windows = list(
         SHUMatReader().iter_windows(
-            RESOURCE_ROOT / "mat_files", target_sampling_rate_hz=250.0
+            shu_single_session_root / "mat_files", target_sampling_rate_hz=250.0
         )
     )
     edf_windows = list(
         SHUEdfReader().iter_windows(
-            RESOURCE_ROOT / "edf_files",
-            events_root=RESOURCE_ROOT / "events",
+            shu_single_session_root / "edf_files",
+            events_root=shu_single_session_root / "events",
             target_sampling_rate_hz=250.0,
         )
     )

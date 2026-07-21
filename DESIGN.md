@@ -37,7 +37,7 @@ The main principles are:
 ├── reports/
 │   ├── part1.md
 │   └── part2.md
-└── resources/shu-mi_dataset/       # one real MAT/EDF/event sample plus metadata
+└── resources/data/shu-mi_dataset/  # local full archive; not committed
 ```
 
 ## 3. Command-line interface
@@ -266,7 +266,7 @@ The aggregate includes every run, mean, sample/population variability as applica
 - throughput;
 - peak CUDA memory when available.
 
-`utils/compare.py` combines five-seed summaries and architecture benchmarks into JSON and Markdown under `reports/task_c/`.
+`utils/compare.py` combines five-seed summaries and architecture benchmarks into JSON and Markdown under `reports/results_models_comparison/`.
 
 ## 8. Tests
 
@@ -313,13 +313,24 @@ The suite covers the following groups.
 - EDF materialization;
 - SHU-MI MAT versus EDF/event equivalence.
 
-Run:
+Run the self-contained suite with:
 
 ```bash
 make test
 make test-verbose
 make check
 ```
+
+Run real-file and full-manifest checks separately:
+
+```bash
+make test-integration SHU_ROOT=/absolute/path/to/shu-mi_dataset
+```
+
+The fast MAT harmonization tests generate one deterministic 100-trial fixture.
+Real MAT/EDF equivalence stages only `sub-001`, session 01 from the configured
+full archive. The complete 11,988-example expectation is enforced only by the
+strict full-manifest integration audit.
 
 ## 9. Makefile reference
 
@@ -332,8 +343,10 @@ make check
 | `lock` | Regenerate `uv.lock` without an explicit upgrade. |
 | `update` | Upgrade permitted dependencies and sync. |
 | `smoke` | CPU-friendly model/metric smoke test. |
-| `test` | Run all tests quietly. |
-| `test-verbose` | Run all tests verbosely. |
+| `test` | Run fast tests, excluding real-data integration checks. |
+| `test-integration` | Run tests requiring real SHU-MI files or a full manifest. |
+| `test-all` | Run fast and integration tests together. |
+| `test-verbose` | Run fast tests verbosely. |
 | `lint` / `lint-fix` | Run Ruff checks, optionally applying safe fixes. |
 | `format` / `format-check` | Apply or verify Ruff formatting. |
 | `typecheck` | Run Pyright. |
@@ -346,8 +359,9 @@ make check
 |---|---|
 | `preprocess` | Convert SHU-MI MAT files to HDF5. |
 | `inspect-data` | Audit HDF5 data and, by default, enforce the paper protocol. |
-| `sample-preprocess` | Process the bundled subject/session sample. |
-| `sample-inspect` | Inspect the intentionally incomplete bundled sample. |
+| `stage-sample` | Copy one configured subject/session from the full local archive. |
+| `sample-preprocess` | Process the staged 100-trial subject/session sample. |
+| `sample-inspect` | Inspect the intentionally incomplete staged sample. |
 
 ### Harmonized data backend
 

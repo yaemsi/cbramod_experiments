@@ -14,16 +14,17 @@ PYTHON ?= python
 PACKAGE := cbramod_experiments
 TEST_DIR := tests
 
-RAW_DIR ?= "resources/data/shu-mi_dataset/mat_files"
-DATASET ?= "resources/data/shu-mi_dataset/preprocessed/shu_mi.h5"
+SHU_ROOT ?= resources/data/shu-mi_dataset
+RAW_DIR ?= $(SHU_ROOT)/mat_files
+DATASET ?= $(SHU_ROOT)/preprocessed/shu_mi.h5
 DATA_BACKEND ?= hdf5
-HARMONIZED_SHU_DIR ?= "resources/data/harmonized/shu_mi"
+HARMONIZED_SHU_DIR ?= resources/data/harmonized/shu_mi
 HARMONIZED_SHU_MANIFEST ?= $(HARMONIZED_SHU_DIR)/manifest.parquet
-SHU_EDF_DIR ?= "resources/data/shu-mi_dataset/edf_files"
-SHU_EVENTS_DIR ?= "resources/data/shu-mi_dataset/events"
-HARMONIZED_SHU_EDF_DIR ?= "resources/data/harmonized/shu_mi_edf"
-HBN_ROOT ?= "resources/data/hbn"
-HARMONIZED_HBN_DIR ?= "resources/data/harmonized/hbn_subset"
+SHU_EDF_DIR ?= $(SHU_ROOT)/edf_files
+SHU_EVENTS_DIR ?= $(SHU_ROOT)/events
+HARMONIZED_SHU_EDF_DIR ?= resources/data/harmonized/shu_mi_edf
+HBN_ROOT ?= resources/data/hbn
+HARMONIZED_HBN_DIR ?= resources/data/harmonized/hbn_subset
 HARMONIZED_HBN_MANIFEST ?= $(HARMONIZED_HBN_DIR)/manifest.parquet
 HBN_DATASET_ID ?= hbn
 HBN_TARGET_RATE ?= 200
@@ -37,7 +38,7 @@ SIMPLECONV_CONFIG ?= configs/eegsimpleconv.yaml
 CHECKPOINT ?=
 OUTPUT_DIR ?= outputs/cbramod_shu_mi
 SIMPLECONV_OUTPUT_DIR ?= outputs/eegsimpleconv_shu_mi
-TASK_C_OUTPUT_DIR ?= reports/task_c
+TASK_C_OUTPUT_DIR ?= reports/results_models_comparison
 CBRAMOD_SUMMARY ?= $(OUTPUT_DIR)/summary.json
 SIMPLECONV_SUMMARY ?= $(SIMPLECONV_OUTPUT_DIR)/summary.json
 CBRAMOD_BENCHMARK ?= $(TASK_C_OUTPUT_DIR)/cbramod_benchmark.json
@@ -48,6 +49,8 @@ BENCHMARK_BATCHES ?= 1 64
 BENCHMARK_WARMUP ?= 20
 BENCHMARK_ITERATIONS ?= 100
 DATA_NOTEBOOK ?= notebooks/shu_mi_data_exploration.ipynb
+SAMPLE_ROOT ?= data/fixtures/shu_mi_single_session
+SAMPLE_STEM ?= sub-001_ses-01_task_motorimagery
 PYTEST_ARGS ?=
 OVERWRITE ?= 0
 STRICT ?= 1
@@ -72,13 +75,13 @@ else
 CHECKPOINT_FLAG :=
 endif
 
-.PHONY: help all sync install lock update smoke main test test-verbose \
+.PHONY: help all sync install lock update smoke main test test-all test-integration test-verbose \
         lint lint-fix format format-check typecheck check ci hooks \
         preprocess inspect-data harmonize-shu harmonize-shu-edf harmonize-hbn \
         inspect-harmonized compare-backends check-checkpoint train-cbramod train-simpleconv \
         reproduce-cbramod reproduce-cbramod-debug reproduce-simpleconv \
         benchmark-cbramod benchmark-simpleconv benchmark-models compare-models task-c \
-        sample-preprocess sample-inspect sample-harmonize sample-harmonize-edf \
+        stage-sample sample-preprocess sample-inspect sample-harmonize sample-harmonize-edf \
         sample-compare-backends sample-harmonize-bids explore-data render-data-notebook \
         clean clean-data distclean
 
@@ -112,11 +115,17 @@ smoke: ## Run a quick model and metrics smoke test.
 
 main: smoke ## Backward-compatible alias for smoke.
 
-test: ## Run the complete test suite.
-	$(UV) run $(PYTHON) -m pytest $(TEST_DIR) -q $(PYTEST_ARGS)
+test: ## Run fast tests that do not require real local EEG files.
+	$(UV) run $(PYTHON) -m pytest $(TEST_DIR) -q -m "not integration" $(PYTEST_ARGS)
 
-test-verbose: ## Run tests with verbose output.
-	$(UV) run $(PYTHON) -m pytest $(TEST_DIR) -vv $(PYTEST_ARGS)
+test-integration: ## Run tests requiring real SHU-MI files/full manifests.
+	SHU_MI_ROOT="$(SHU_ROOT)" $(UV) run $(PYTHON) -m pytest $(TEST_DIR) -q -m integration $(PYTEST_ARGS)
+
+test-all: ## Run unit and integration tests together.
+	SHU_MI_ROOT="$(SHU_ROOT)" $(UV) run $(PYTHON) -m pytest $(TEST_DIR) -q $(PYTEST_ARGS)
+
+test-verbose: ## Run fast tests with verbose output.
+	$(UV) run $(PYTHON) -m pytest $(TEST_DIR) -vv -m "not integration" $(PYTEST_ARGS)
 
 lint: ## Check lint rules without modifying files.
 	$(UV) run ruff check $(PACKAGE) $(TEST_DIR) main.py
@@ -193,23 +202,37 @@ task-c: reproduce-simpleconv benchmark-models compare-models ## Run the complete
 reproduce-cbramod-debug: ## Run the reproduction command without requiring all 25 subjects.
 	$(UV) run $(PYTHON) -m main reproduce --config "$(CBRAMOD_CONFIG)" --data "$(DATASET)" --data-backend "$(DATA_BACKEND)" --output-dir "$(OUTPUT_DIR)" --seeds $(REPRO_SEEDS) $(CHECKPOINT_FLAG) --allow-incomplete-data
 
-sample-preprocess: ## Preprocess the bundled subject-1 sample for pipeline validation.
-	$(UV) run $(PYTHON) -m main preprocess --raw-dir resources/shu-mi_dataset/mat_files --output data/processed/shu_mi_sample.h5 --overwrite
+stage-sample: ## Stage one subject/session from the full local SHU-MI archive.
+	rm -rf "$(SAMPLE_ROOT)"
+	mkdir -p "$(SAMPLE_ROOT)/mat_files" "$(SAMPLE_ROOT)/edf_files" "$(SAMPLE_ROOT)/events"
+	@mat=$$(find "$(RAW_DIR)" -type f -name "$(SAMPLE_STEM)_eeg.mat" -print -quit); \
+	test -n "$$mat" || { echo "Missing $(SAMPLE_STEM)_eeg.mat below $(RAW_DIR)"; exit 1; }; \
+	cp "$$mat" "$(SAMPLE_ROOT)/mat_files/"
+	@edf=$$(find "$(SHU_EDF_DIR)" -type f -name "$(SAMPLE_STEM)_eeg.edf" -print -quit); \
+	test -n "$$edf" || { echo "Missing $(SAMPLE_STEM)_eeg.edf below $(SHU_EDF_DIR)"; exit 1; }; \
+	cp "$$edf" "$(SAMPLE_ROOT)/edf_files/"
+	@events=$$(find "$(SHU_EVENTS_DIR)" -type f -name "$(SAMPLE_STEM)_events.tsv" -print -quit); \
+	test -n "$$events" || { echo "Missing $(SAMPLE_STEM)_events.tsv below $(SHU_EVENTS_DIR)"; exit 1; }; \
+	cp "$$events" "$(SAMPLE_ROOT)/events/"
 
-sample-inspect: ## Inspect the bundled incomplete sample (warnings are expected).
+
+sample-preprocess: stage-sample ## Preprocess one staged 100-trial SHU-MI session.
+	$(UV) run $(PYTHON) -m main preprocess --raw-dir "$(SAMPLE_ROOT)/mat_files" --output data/processed/shu_mi_sample.h5 --overwrite
+
+sample-inspect: ## Inspect the staged incomplete sample (warnings are expected).
 	$(UV) run $(PYTHON) -m main inspect-data --data data/processed/shu_mi_sample.h5
 
-sample-harmonize: ## Build Arrow shards from the bundled SHU-MI MAT sample.
-	$(UV) run $(PYTHON) -m main harmonize-shu --source mat --raw-dir resources/shu-mi_dataset/mat_files --output-dir data/harmonized/shu_mi_sample --records-per-batch 32 --batches-per-shard 2 --overwrite
+sample-harmonize: stage-sample ## Build Arrow shards from one staged SHU-MI MAT session.
+	$(UV) run $(PYTHON) -m main harmonize-shu --source mat --raw-dir "$(SAMPLE_ROOT)/mat_files" --output-dir data/harmonized/shu_mi_sample --records-per-batch 32 --batches-per-shard 2 --overwrite
 
-sample-harmonize-edf: ## Reconstruct the bundled MAT sample through EDF + events.
-	$(UV) run $(PYTHON) -m main harmonize-shu --source edf --raw-dir resources/shu-mi_dataset/edf_files --events-root resources/shu-mi_dataset/events --output-dir data/harmonized/shu_mi_edf_sample --records-per-batch 32 --batches-per-shard 2 --overwrite
+sample-harmonize-edf: stage-sample ## Reconstruct the same staged session through EDF + events.
+	$(UV) run $(PYTHON) -m main harmonize-shu --source edf --raw-dir "$(SAMPLE_ROOT)/edf_files" --events-root "$(SAMPLE_ROOT)/events" --output-dir data/harmonized/shu_mi_edf_sample --records-per-batch 32 --batches-per-shard 2 --overwrite
 
-sample-compare-backends: sample-preprocess sample-harmonize ## Verify exact HDF5/Arrow parity on the bundled sample.
+sample-compare-backends: sample-preprocess sample-harmonize ## Verify HDF5/Arrow parity on one staged session.
 	$(UV) run $(PYTHON) -m main compare-backends --hdf5 data/processed/shu_mi_sample.h5 --manifest data/harmonized/shu_mi_sample/manifest.parquet
 
-sample-harmonize-bids: ## Exercise the generic BIDS reader on the bundled EDF recording.
-	$(UV) run $(PYTHON) -m main harmonize-bids --root resources/shu-mi_dataset/edf_files --output-dir data/harmonized/bids_sample --dataset-id bids-poc --target-sampling-rate 200 --window-seconds 4 --stride-seconds 4 --limit-recordings 1 --records-per-batch 32 --batches-per-shard 2 --overwrite
+sample-harmonize-bids: stage-sample ## Exercise the generic BIDS reader on one staged EDF recording.
+	$(UV) run $(PYTHON) -m main harmonize-bids --root "$(SAMPLE_ROOT)/edf_files" --output-dir data/harmonized/bids_sample --dataset-id bids-poc --target-sampling-rate 200 --window-seconds 4 --stride-seconds 4 --limit-recordings 1 --records-per-batch 32 --batches-per-shard 2 --overwrite
 
 explore-data: ## Open the SHU-MI exploration notebook in JupyterLab.
 	$(UV) run jupyter lab "$(DATA_NOTEBOOK)"
@@ -227,7 +250,11 @@ clean: ## Remove caches and generated experiment outputs.
 	rm -rf build dist outputs
 
 clean-data: ## Remove generated HDF5/Arrow data; raw data is preserved.
-	rm -rf data/processed data/harmonized
+	rm -rf "$(SHU_ROOT)/preprocessed" \
+	       "$(HARMONIZED_SHU_DIR)" \
+	       "$(HARMONIZED_SHU_EDF_DIR)" \
+	       "$(HARMONIZED_HBN_DIR)" \
+	       data/processed data/harmonized data/fixtures
 
 distclean: clean ## Remove caches plus the local virtual environment.
 	rm -rf .venv
