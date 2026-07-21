@@ -1,0 +1,1 @@
+Download the data from [https://nemar.org/dataexplorer/detail?dataset_id=ds005505](https://nemar.org/dataexplorer/detail?dataset_id=ds005505). Password to extract documents from the zip files: `shu-bci2022`
