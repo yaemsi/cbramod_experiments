@@ -19,19 +19,26 @@ from cbramod_experiments.datasets import preprocess_shu
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RESOURCE_ROOT = PROJECT_ROOT / "resources" / "data" / "shu-mi_dataset"
+RESOURCE_ROOT = PROJECT_ROOT / "resources" / "data" / "shu-mi"
 
-SAMPLE_MAT = RESOURCE_ROOT / "mat_files" / "sub-001_ses-01_task_motorimagery_eeg.mat"
+SAMPLE_MAT_CANDIDATES = (
+    RESOURCE_ROOT / "mat_files" / "sub-001_ses-01_task_motorimagery_eeg.mat",
+    RESOURCE_ROOT / "mat_files" / "mat" / "sub-001_ses-01_task_motorimagery_eeg.mat",
+)
 
 
 def _single_session_mat_dir(tmp_path: Path) -> Path:
-    if not SAMPLE_MAT.is_file():
-        raise FileNotFoundError(f"Missing test fixture: {SAMPLE_MAT}")
+    sample_mat = next((path for path in SAMPLE_MAT_CANDIDATES if path.is_file()), None)
+    if sample_mat is None:
+        raise FileNotFoundError(
+            "Missing SHU-MI MAT fixture; checked: "
+            + ", ".join(str(path) for path in SAMPLE_MAT_CANDIDATES)
+        )
 
     raw_dir = tmp_path / "mat_sample"
     raw_dir.mkdir()
 
-    shutil.copy2(SAMPLE_MAT, raw_dir / SAMPLE_MAT.name)
+    shutil.copy2(sample_mat, raw_dir / sample_mat.name)
     return raw_dir
 
 
@@ -107,7 +114,7 @@ def test_arrow_data_module_returns_training_batches(tmp_path: Path) -> None:
 def test_block_shuffle_sampler_visits_each_example_once(tmp_path: Path) -> None:
     output_dir = tmp_path / "shu_arrow"
     harmonize_shu_mat(
-        RESOURCE_ROOT / "mat_files",
+        _single_session_mat_dir(tmp_path),
         output_dir,
         records_per_batch=10,
         batches_per_shard=2,

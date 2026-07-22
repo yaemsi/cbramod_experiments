@@ -630,13 +630,15 @@ datasets.
 
 ## Quality and reproducibility checks
 
-The suite covers preprocessing, audits, models, checkpoint loading, metrics, training, multi-seed aggregation, benchmarks, comparison generation, Arrow/HDF5 parity, and MAT/EDF equivalence. The current integrated repository previously completed:
+The suite covers preprocessing, audits, models, checkpoint loading, metrics, training, multi-seed aggregation, benchmarks, comparison generation, Arrow/HDF5 parity, and MAT/EDF equivalence. The repository includes fast self-contained tests and optional real-data integration tests. Run the authoritative validation commands against the submitted environment:
 
-```text
-26 tests passed
-Ruff checks passed
-Pyright reported 0 errors and 0 warnings
-Model smoke test passed
+```bash
+make test
+make test-integration
+make format-check
+make lint
+make typecheck
+make smoke
 ```
 
 Exact commands and test groups are documented in [`../DESIGN.md`](../DESIGN.md).

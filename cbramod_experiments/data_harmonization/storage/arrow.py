@@ -67,6 +67,7 @@ class HarmonizationSummary:
     total_signal_bytes: int
     schema_version: str = CANONICAL_SCHEMA_VERSION
     source_audit: dict[str, Any] | None = None
+    timing: dict[str, float] | None = None
 
 
 class ArrowShardWriter:
@@ -102,11 +103,20 @@ class ArrowShardWriter:
         self._current_relative_path = ""
         self._total_signal_bytes = 0
         self._closed = False
+        self._sample_sources: dict[str, str] = {}
 
     def add(self, window: EEGWindow) -> None:
         if self._closed:
             raise RuntimeError("Cannot add samples after closing the writer")
         window.validate()
+        previous_source = self._sample_sources.get(window.sample_id)
+        if previous_source is not None:
+            raise ValueError(
+                "Duplicate sample ID encountered while writing: "
+                f"{window.sample_id!r}. First source: {previous_source!r}; "
+                f"duplicate source: {window.source_uri!r}"
+            )
+        self._sample_sources[window.sample_id] = window.source_uri
         self._pending.append(window)
         if len(self._pending) >= self.records_per_batch:
             self._flush_batch()

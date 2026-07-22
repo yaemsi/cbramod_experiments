@@ -17,7 +17,7 @@ from ..transforms import (
     sliding_windows,
 )
 
-_ENTITY_PATTERN = re.compile(r"(?:^|_)(sub|ses|task)[-_]([^_]+)")
+_ENTITY_PATTERN = re.compile(r"(?:^|_)(sub|ses|task|run|acq|recording)[-_]([^_]+)")
 _SUPPORTED_EXTENSIONS = {".edf", ".bdf", ".set"}
 
 
@@ -52,6 +52,26 @@ def _load_json(path: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+def bids_recording_id(path: str | Path) -> str:
+    """Return the BIDS entities identifying one physical recording."""
+    path = Path(path)
+
+    # For:
+    # sub-X_ses-Y_task-Z_run-1_eeg.set
+    #
+    # return:
+    # sub-X_ses-Y_task-Z_run-1
+    stem = path.stem
+
+    if stem.endswith("_eeg"):
+        stem = stem.removesuffix("_eeg")
+
+    if not stem:
+        raise ValueError(f"Could not derive a recording ID from {path}")
+
+    return stem
+
+
 class BIDSReader:
     """Read BIDS-like EDF/BDF/SET recordings into the canonical schema.
 
@@ -72,11 +92,16 @@ class BIDSReader:
         limit_recordings: int | None = None,
     ) -> list[Path]:
         root_path = Path(root)
-        files = sorted(
-            path
-            for path in root_path.rglob("*_eeg.*")
-            if path.suffix.lower() in _SUPPORTED_EXTENSIONS
-        )
+        if root_path.is_file():
+            if root_path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+                raise ValueError(f"Unsupported EEG format: {root_path.suffix}")
+            files = [root_path]
+        else:
+            files = sorted(
+                path
+                for path in root_path.rglob("*_eeg.*")
+                if path.suffix.lower() in _SUPPORTED_EXTENSIONS
+            )
         subject_filter = {item.removeprefix("sub-") for item in subjects or ()}
         task_filter = {item.removeprefix("task-") for item in tasks or ()}
         selected: list[Path] = []
@@ -97,47 +122,52 @@ class BIDSReader:
         entities = parse_bids_entities(signal_path)
         if "sub" not in entities:
             raise ValueError(f"Cannot parse BIDS subject from {signal_path}")
-        raw = _read_raw(signal_path)
-        channels_path = _exact_sidecar(signal_path, "_channels.tsv")
-        channel_metadata: list[dict[str, object]] = []
-        if channels_path.exists():
-            channel_table = pd.read_csv(channels_path, sep="\t")
-            channel_metadata = channel_table.to_dict(orient="records")
-            type_mapping: dict[str, str] = {}
-            supported_types = {
-                "EEG": "eeg",
-                "EOG": "eog",
-                "ECG": "ecg",
-                "EMG": "emg",
-                "TRIG": "stim",
-                "STIM": "stim",
-                "MISC": "misc",
-            }
-            for row in channel_metadata:
-                name = row.get("name")
-                channel_type = row.get("type")
-                if isinstance(name, str) and isinstance(channel_type, str):
-                    mapped = supported_types.get(channel_type.upper())
-                    if mapped is not None and name in raw.ch_names:
-                        type_mapping[name] = mapped
-            if type_mapping:
-                raw.set_channel_types(type_mapping, on_unit_change="ignore")
 
-        eeg_indices = mne.pick_types(
-            raw.info,
-            eeg=True,
-            meg=False,
-            eog=False,
-            ecg=False,
-            emg=False,
-            stim=False,
-            misc=False,
-            exclude="bads",
-        )
-        if len(eeg_indices) == 0:
-            raise ValueError(f"No EEG channels found in {signal_path}")
-        data_uv = cast(np.ndarray, raw.get_data(picks=eeg_indices)) * 1e6
-        eeg_channel_names = tuple(raw.ch_names[int(index)] for index in eeg_indices)
+        raw = _read_raw(signal_path)
+        try:
+            channels_path = _exact_sidecar(signal_path, "_channels.tsv")
+            channel_metadata: list[dict[str, object]] = []
+            if channels_path.exists():
+                channel_table = pd.read_csv(channels_path, sep="\t")
+                channel_metadata = channel_table.to_dict(orient="records")
+                type_mapping: dict[str, str] = {}
+                supported_types = {
+                    "EEG": "eeg",
+                    "EOG": "eog",
+                    "ECG": "ecg",
+                    "EMG": "emg",
+                    "TRIG": "stim",
+                    "STIM": "stim",
+                    "MISC": "misc",
+                }
+                for row in channel_metadata:
+                    name = row.get("name")
+                    channel_type = row.get("type")
+                    if isinstance(name, str) and isinstance(channel_type, str):
+                        mapped = supported_types.get(channel_type.upper())
+                        if mapped is not None and name in raw.ch_names:
+                            type_mapping[name] = mapped
+                if type_mapping:
+                    raw.set_channel_types(type_mapping, on_unit_change="ignore")
+
+            eeg_indices = mne.pick_types(
+                raw.info,
+                eeg=True,
+                meg=False,
+                eog=False,
+                ecg=False,
+                emg=False,
+                stim=False,
+                misc=False,
+                exclude="bads",
+            )
+            if len(eeg_indices) == 0:
+                raise ValueError(f"No EEG channels found in {signal_path}")
+            data_uv = cast(np.ndarray, raw.get_data(picks=eeg_indices)) * 1e6
+            eeg_channel_names = tuple(raw.ch_names[int(index)] for index in eeg_indices)
+            sampling_rate_hz = float(raw.info["sfreq"])
+        finally:
+            raw.close()
 
         events_path = _exact_sidecar(signal_path, "_events.tsv")
         events: list[EEGEvent] = []
@@ -166,7 +196,7 @@ class BIDSReader:
         inherited_json = _load_json(root_path / f"task-{task}_eeg.json") if task else {}
         result = EEGRecording(
             signal=np.asarray(data_uv, dtype=np.float32),
-            sampling_rate_hz=float(raw.info["sfreq"]),
+            sampling_rate_hz=sampling_rate_hz,
             channel_names=eeg_channel_names,
             dataset_id=self.dataset_id,
             subject_id=f"sub-{entities['sub']}",
@@ -176,9 +206,14 @@ class BIDSReader:
             source_uri=str(signal_path),
             source_format=signal_path.suffix.lower().lstrip("."),
             metadata={
-                "recording_json": {**inherited_json, **recording_json},
+                "recording_id": bids_recording_id(signal_path),
+                "run_id": entities.get("run"),
+                "recording_json": {
+                    **inherited_json,
+                    **recording_json,
+                },
                 "channels": channel_metadata,
-                "events_path": str(events_path) if events_path.exists() else None,
+                "events_path": (str(events_path) if events_path.exists() else None),
             },
         )
         result = normalize_channel_names(result)
@@ -198,6 +233,7 @@ class BIDSReader:
         subjects: Sequence[str] | None = None,
         tasks: Sequence[str] | None = None,
         limit_recordings: int | None = None,
+        metadata_root: str | Path | None = None,
         amplitude_scale: float = 100.0,
         preprocessing_version: str = DEFAULT_PREPROCESSING_VERSION,
     ) -> Iterable[EEGWindow]:
@@ -210,8 +246,14 @@ class BIDSReader:
         if not files:
             raise FileNotFoundError(f"No BIDS EEG recordings found below {root}")
 
+        metadata_root_path = (
+            Path(metadata_root) if metadata_root is not None else Path(root)
+        )
+        if metadata_root_path.is_file():
+            metadata_root_path = metadata_root_path.parent
+
         for path in files:
-            recording = self.read_recording(path, root=root)
+            recording = self.read_recording(path, root=metadata_root_path)
             if target_sampling_rate_hz is not None:
                 recording = resample_recording(recording, target_sampling_rate_hz)
             mask = np.ones(len(recording.channel_names), dtype=np.bool_)

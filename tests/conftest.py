@@ -22,6 +22,7 @@ def shu_real_root() -> Path:
         candidates.append(Path(configured))
     candidates.extend(
         [
+            Path("resources/data/shu-mi"),
             Path("resources/data/shu-mi_dataset"),
             Path("resources/shu-mi_dataset"),
         ]

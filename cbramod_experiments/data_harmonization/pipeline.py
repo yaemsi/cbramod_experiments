@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
-from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Sequence
 
+from .parallel import harmonize_recordings
 from .readers import BIDSReader, SHUEdfReader, SHUMatReader
 from .schema import DEFAULT_PREPROCESSING_VERSION
-from .storage import ArrowShardWriter, HarmonizationSummary
+from .storage import HarmonizationSummary
 
 
 def harmonize_shu_mat(
@@ -19,25 +18,38 @@ def harmonize_shu_mat(
     amplitude_scale: float = 100.0,
     records_per_batch: int = 256,
     batches_per_shard: int = 16,
+    num_workers: int = 1,
+    target_job_gib: float = 0.0,
+    max_recordings_per_job: int = 128,
     overwrite: bool = False,
+    resume: bool = False,
+    skip_invalid_recordings: bool = False,
+    show_progress: bool = True,
     preprocessing_version: str = DEFAULT_PREPROCESSING_VERSION,
 ) -> HarmonizationSummary:
     reader = SHUMatReader()
-    windows = reader.iter_windows(
-        raw_dir,
-        target_sampling_rate_hz=target_sampling_rate_hz,
-        original_sampling_rate_hz=original_sampling_rate_hz,
-        amplitude_scale=amplitude_scale,
-        preprocessing_version=preprocessing_version,
-    )
-    writer = ArrowShardWriter(
-        output_dir,
+    files = reader.discover(raw_dir)
+    return harmonize_recordings(
+        source_kind="shu-mat",
+        source_paths=files,
+        dataset_root=raw_dir,
+        output_dir=output_dir,
+        reader_options={
+            "target_sampling_rate_hz": target_sampling_rate_hz,
+            "original_sampling_rate_hz": original_sampling_rate_hz,
+            "amplitude_scale": amplitude_scale,
+            "preprocessing_version": preprocessing_version,
+        },
         records_per_batch=records_per_batch,
         batches_per_shard=batches_per_shard,
+        num_workers=num_workers,
+        target_job_bytes=int(target_job_gib * 1024**3),
+        max_recordings_per_job=max_recordings_per_job,
         overwrite=overwrite,
+        resume=resume,
+        skip_invalid_recordings=skip_invalid_recordings,
+        show_progress=show_progress,
     )
-    writer.add_all(windows)
-    return writer.close()
 
 
 def harmonize_shu_edf(
@@ -49,44 +61,40 @@ def harmonize_shu_edf(
     amplitude_scale: float = 100.0,
     records_per_batch: int = 256,
     batches_per_shard: int = 16,
+    num_workers: int = 1,
+    target_job_gib: float = 0.0,
+    max_recordings_per_job: int = 128,
     overwrite: bool = False,
+    resume: bool = False,
     skip_invalid_recordings: bool = False,
+    show_progress: bool = True,
     preprocessing_version: str = DEFAULT_PREPROCESSING_VERSION,
 ) -> HarmonizationSummary:
-    reader = SHUEdfReader(strict=not skip_invalid_recordings)
-    windows = reader.iter_windows(
-        raw_dir,
-        events_root=events_root,
-        target_sampling_rate_hz=target_sampling_rate_hz,
-        amplitude_scale=amplitude_scale,
-        preprocessing_version=preprocessing_version,
-    )
-    writer = ArrowShardWriter(
-        output_dir,
+    reader = SHUEdfReader(strict=True)
+    files = reader.discover(raw_dir)
+    return harmonize_recordings(
+        source_kind="shu-edf",
+        source_paths=files,
+        dataset_root=raw_dir,
+        output_dir=output_dir,
+        reader_options={
+            "events_root": str(events_root)
+            if events_root is not None
+            else str(raw_dir),
+            "target_sampling_rate_hz": target_sampling_rate_hz,
+            "amplitude_scale": amplitude_scale,
+            "preprocessing_version": preprocessing_version,
+        },
         records_per_batch=records_per_batch,
         batches_per_shard=batches_per_shard,
+        num_workers=num_workers,
+        target_job_bytes=int(target_job_gib * 1024**3),
+        max_recordings_per_job=max_recordings_per_job,
         overwrite=overwrite,
+        resume=resume,
+        skip_invalid_recordings=skip_invalid_recordings,
+        show_progress=show_progress,
     )
-    writer.add_all(windows)
-
-    # Persist the source audit before finalizing the writer so that lenient runs
-    # still explain what happened even when every discovered file was invalid.
-    audit = reader.audit_report()
-    output_path = Path(output_dir)
-    audit_path = output_path / "source_audit.json"
-    audit_path.write_text(
-        json.dumps(audit, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    audit["report_path"] = str(audit_path)
-
-    summary = writer.close()
-    summary = replace(summary, source_audit=audit)
-    (output_path / "summary.json").write_text(
-        json.dumps(asdict(summary), indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    return summary
 
 
 def harmonize_bids(
@@ -106,29 +114,45 @@ def harmonize_bids(
     amplitude_scale: float = 100.0,
     records_per_batch: int = 256,
     batches_per_shard: int = 16,
+    num_workers: int = 1,
+    target_job_gib: float = 0.0,
+    max_recordings_per_job: int = 128,
     overwrite: bool = False,
+    resume: bool = False,
+    skip_invalid_recordings: bool = False,
+    show_progress: bool = True,
     preprocessing_version: str = DEFAULT_PREPROCESSING_VERSION,
 ) -> HarmonizationSummary:
     reader = BIDSReader(dataset_id=dataset_id)
-    windows = reader.iter_windows(
+    files = reader.discover(
         root,
-        target_sampling_rate_hz=target_sampling_rate_hz,
-        window_seconds=window_seconds,
-        stride_seconds=stride_seconds,
-        channel_policy=channel_policy,
-        channels=channels,
-        allow_missing_channels=allow_missing_channels,
         subjects=subjects,
         tasks=tasks,
         limit_recordings=limit_recordings,
-        amplitude_scale=amplitude_scale,
-        preprocessing_version=preprocessing_version,
     )
-    writer = ArrowShardWriter(
-        output_dir,
+    return harmonize_recordings(
+        source_kind="bids",
+        source_paths=files,
+        dataset_root=root,
+        output_dir=output_dir,
+        reader_options={
+            "dataset_id": dataset_id,
+            "target_sampling_rate_hz": target_sampling_rate_hz,
+            "window_seconds": window_seconds,
+            "stride_seconds": stride_seconds,
+            "channel_policy": channel_policy,
+            "channels": tuple(channels) if channels is not None else None,
+            "allow_missing_channels": allow_missing_channels,
+            "amplitude_scale": amplitude_scale,
+            "preprocessing_version": preprocessing_version,
+        },
         records_per_batch=records_per_batch,
         batches_per_shard=batches_per_shard,
+        num_workers=num_workers,
+        target_job_bytes=int(target_job_gib * 1024**3),
+        max_recordings_per_job=max_recordings_per_job,
         overwrite=overwrite,
+        resume=resume,
+        skip_invalid_recordings=skip_invalid_recordings,
+        show_progress=show_progress,
     )
-    writer.add_all(windows)
-    return writer.close()

@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-import pytest
-
 from pathlib import Path
 
+import numpy as np
+import pytest
+
 from cbramod_experiments.data_harmonization import BIDSReader, harmonize_bids
+from cbramod_experiments.data_harmonization.readers import (
+    bids_recording_id,
+    parse_bids_entities,
+)
+from cbramod_experiments.data_harmonization.schema import EEGRecording
 from cbramod_experiments.data_harmonization.storage import ArrowEEGDataset
-from cbramod_experiments.data_harmonization.readers import parse_bids_entities
+from cbramod_experiments.data_harmonization.transforms import sliding_windows
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RESOURCE_ROOT = PROJECT_ROOT / "resources" / "data" / "shu-mi_dataset"
+RESOURCE_ROOT = PROJECT_ROOT / "resources" / "data" / "shu-mi"
 
 
 def test_parse_bids_entities() -> None:
@@ -22,6 +28,56 @@ def test_parse_bids_entities() -> None:
         "ses": "HBNsiteRU",
         "task": "RestingState",
     }
+
+
+def test_bids_recording_identity_preserves_run_entities() -> None:
+    run_1 = "sub-ABC_task-rest_run-1_eeg.set"
+    run_2 = "sub-ABC_task-rest_run-2_eeg.set"
+    assert parse_bids_entities(run_1)["run"] == "1"
+    assert parse_bids_entities(run_2)["run"] == "2"
+    assert bids_recording_id(run_1) == "sub-ABC_task-rest_run-1"
+    assert bids_recording_id(run_2) == "sub-ABC_task-rest_run-2"
+
+
+def test_bids_runs_generate_disjoint_window_ids() -> None:
+    def recording(run: int) -> EEGRecording:
+        recording_id = f"sub-ABC_task-rest_run-{run}"
+        return EEGRecording(
+            signal=np.zeros((2, 16), dtype=np.float32),
+            sampling_rate_hz=4.0,
+            channel_names=("C3", "C4"),
+            dataset_id="hbn",
+            subject_id="sub-ABC",
+            session_id=None,
+            task="task-rest",
+            source_uri=f"{recording_id}_eeg.set",
+            source_format="set",
+            metadata={"recording_id": recording_id, "run_id": str(run)},
+        )
+
+    ids_1 = {
+        window.sample_id
+        for window in sliding_windows(
+            recording(1),
+            window_seconds=2.0,
+            stride_seconds=2.0,
+            split=None,
+            amplitude_scale=1.0,
+            preprocessing_version="test",
+        )
+    }
+    ids_2 = {
+        window.sample_id
+        for window in sliding_windows(
+            recording(2),
+            window_seconds=2.0,
+            stride_seconds=2.0,
+            split=None,
+            amplitude_scale=1.0,
+            preprocessing_version="test",
+        )
+    }
+    assert ids_1.isdisjoint(ids_2)
 
 
 @pytest.mark.integration

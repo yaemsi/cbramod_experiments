@@ -8,7 +8,9 @@ from typing import Sequence
 
 import torch
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
+from ..data_harmonization.datamodule import DataBackend, EEGDataModule
 from ..data_harmonization.storage import StreamingArrowEEGDataset
 
 
@@ -161,3 +163,196 @@ def benchmark_streaming_dataset(
 def _synchronize(device: torch.device) -> None:
     if device.type == "cuda" and torch.cuda.is_available():
         torch.cuda.synchronize(device)
+
+
+@dataclass(frozen=True)
+class DataLoaderEpochBenchmarkResult:
+    data_path: str
+    backend: str
+    split: str
+    device: str
+    epoch: int
+    batch_size: int
+    num_workers: int
+    prefetch_factor: int
+    pin_memory: bool
+    persistent_workers: bool
+    streaming_shuffle_buffer_size: int
+    expected_examples: int
+    observed_examples: int
+    batches: int
+    signal_bytes: int
+    loader_build_seconds: float
+    iterator_startup_seconds: float
+    first_batch_seconds: float
+    epoch_seconds: float
+    steady_state_seconds: float
+    examples_per_second: float
+    mebibytes_per_second: float
+    first_batch_shape: tuple[int, ...]
+    signal_dtype: str
+    complete_epoch: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+def benchmark_dataloader_epoch(
+    data_path: str | Path,
+    *,
+    backend: DataBackend = "arrow_streaming",
+    split: str = "train",
+    output_path: str | Path | None = None,
+    batch_size: int = 64,
+    num_workers: int = 8,
+    prefetch_factor: int = 4,
+    streaming_shuffle_buffer_size: int = 2048,
+    seed: int = 0,
+    epoch: int = 0,
+    device: str | torch.device = "cpu",
+    pin_memory: bool | None = None,
+    persistent_workers: bool = True,
+    show_progress: bool = True,
+    require_labels: bool = True,
+) -> DataLoaderEpochBenchmarkResult:
+    """Measure one complete dataloader epoch, including worker startup.
+
+    This benchmark intentionally excludes model forward/backward computation. It
+    measures manifest filtering, worker startup, shard reads, decompression,
+    collation, and optional host-to-device transfer. The reported payload
+    throughput counts signal tensor bytes only, not filesystem metadata or
+    compression overhead.
+    """
+
+    if split not in {"train", "val", "test", None}:
+        raise ValueError(f"Unknown split: {split}")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if num_workers < 0:
+        raise ValueError("num_workers must be non-negative")
+    if prefetch_factor <= 0:
+        raise ValueError("prefetch_factor must be positive")
+    if streaming_shuffle_buffer_size <= 0:
+        raise ValueError("streaming_shuffle_buffer_size must be positive")
+    if epoch < 0:
+        raise ValueError("epoch must be non-negative")
+
+    resolved_device = torch.device(device)
+    resolved_pin_memory = (
+        resolved_device.type == "cuda" if pin_memory is None else pin_memory
+    )
+    resolved_persistent_workers = persistent_workers and num_workers > 0
+
+    build_start = time.perf_counter()
+    module = EEGDataModule(
+        data_path,
+        backend=backend,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=resolved_pin_memory,
+        persistent_workers=resolved_persistent_workers,
+        seed=seed,
+        streaming_shuffle_buffer_size=streaming_shuffle_buffer_size,
+        prefetch_factor=prefetch_factor,
+        require_labels=require_labels,
+    )
+    loader = module.loader(split)
+    loader_build_seconds = time.perf_counter() - build_start
+
+    dataset = loader.dataset
+    if hasattr(dataset, "set_epoch"):
+        dataset.set_epoch(epoch)
+    sampler = getattr(loader, "sampler", None)
+    if hasattr(sampler, "set_epoch"):
+        sampler.set_epoch(epoch)
+
+    expected_examples = (
+        dataset.assigned_example_count()
+        if isinstance(dataset, StreamingArrowEEGDataset)
+        else len(dataset)
+    )
+    if expected_examples <= 0:
+        raise RuntimeError("The selected dataloader view contains no examples")
+
+    epoch_start = time.perf_counter()
+    iterator = iter(loader)
+    iterator_startup_seconds = time.perf_counter() - epoch_start
+
+    observed_examples = 0
+    batches = 0
+    signal_bytes = 0
+    first_batch_seconds = 0.0
+    first_batch_shape: tuple[int, ...] = ()
+    signal_dtype = ""
+
+    rank_zero = (
+        not torch.distributed.is_available()
+        or not torch.distributed.is_initialized()
+        or torch.distributed.get_rank() == 0
+    )
+    progress = tqdm(
+        total=expected_examples,
+        desc=f"{backend}:{split} epoch {epoch}",
+        unit="example",
+        disable=not show_progress or not rank_zero,
+    )
+    try:
+        for signals, labels in iterator:
+            if resolved_device.type != "cpu":
+                signals = signals.to(resolved_device, non_blocking=True)
+                labels = labels.to(resolved_device, non_blocking=True)
+
+            batches += 1
+            observed_examples += int(signals.shape[0])
+            signal_bytes += signals.numel() * signals.element_size()
+            if batches == 1:
+                _synchronize(resolved_device)
+                first_batch_seconds = time.perf_counter() - epoch_start
+                first_batch_shape = tuple(int(value) for value in signals.shape)
+                signal_dtype = str(signals.dtype)
+            progress.update(int(signals.shape[0]))
+    finally:
+        progress.close()
+
+    _synchronize(resolved_device)
+    epoch_seconds = time.perf_counter() - epoch_start
+    if batches == 0 or epoch_seconds <= 0:
+        raise RuntimeError("No dataloader batches were measured")
+
+    steady_state_seconds = max(0.0, epoch_seconds - first_batch_seconds)
+    mib_per_second = signal_bytes / epoch_seconds / (1024**2)
+    result = DataLoaderEpochBenchmarkResult(
+        data_path=str(data_path),
+        backend=backend,
+        split=split,
+        device=str(resolved_device),
+        epoch=epoch,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        prefetch_factor=prefetch_factor,
+        pin_memory=resolved_pin_memory,
+        persistent_workers=resolved_persistent_workers,
+        streaming_shuffle_buffer_size=streaming_shuffle_buffer_size,
+        expected_examples=expected_examples,
+        observed_examples=observed_examples,
+        batches=batches,
+        signal_bytes=signal_bytes,
+        loader_build_seconds=loader_build_seconds,
+        iterator_startup_seconds=iterator_startup_seconds,
+        first_batch_seconds=first_batch_seconds,
+        epoch_seconds=epoch_seconds,
+        steady_state_seconds=steady_state_seconds,
+        examples_per_second=observed_examples / epoch_seconds,
+        mebibytes_per_second=mib_per_second,
+        first_batch_shape=first_batch_shape,
+        signal_dtype=signal_dtype,
+        complete_epoch=observed_examples == expected_examples,
+    )
+    if output_path is not None:
+        output = Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(result.to_dict(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    return result

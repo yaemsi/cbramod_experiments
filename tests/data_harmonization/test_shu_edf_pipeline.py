@@ -1,84 +1,112 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import pytest
 
 from cbramod_experiments.data_harmonization import pipeline
-from cbramod_experiments.data_harmonization.storage import HarmonizationSummary
+from cbramod_experiments.data_harmonization.storage import (
+    HarmonizationSummary,
+)
 
 
-def test_harmonize_edf_persists_lenient_source_audit(
+def test_harmonize_edf_forwards_lenient_mode_to_shared_engine(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    created: dict[str, Any] = {}
+    captured: dict[str, Any] = {}
 
     class FakeReader:
         def __init__(self, *, strict: bool) -> None:
-            created["strict"] = strict
+            captured["reader_strict"] = strict
 
-        def iter_windows(self, *args: Any, **kwargs: Any) -> Iterable[object]:
-            return iter(())
+        def discover(self, root: str | Path) -> list[Path]:
+            root = Path(root)
+            return [
+                root / "sub-001_ses-01_task_motorimagery_eeg.edf",
+                root / "sub-002_ses-01_task_motorimagery_eeg.edf",
+            ]
 
-        def audit_report(self) -> dict[str, Any]:
-            return {
-                "strict": False,
-                "discovered_recordings": 2,
-                "processed_recordings": 1,
-                "skipped_recordings": 1,
-                "failures": [
-                    {
-                        "path": "bad.edf",
-                        "error_type": "ValueError",
-                        "error": "malformed header",
-                    }
-                ],
-            }
+    def fake_harmonize_recordings(
+        **kwargs: Any,
+    ) -> HarmonizationSummary:
+        captured.update(kwargs)
 
-    class FakeWriter:
-        def __init__(self, output_dir: str | Path, **_: Any) -> None:
-            self.output_dir = Path(output_dir)
-            self.output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = Path(kwargs["output_dir"])
+        audit = {
+            "source_kind": "shu-edf",
+            "strict": False,
+            "num_workers": kwargs["num_workers"],
+            "discovered_recordings": 2,
+            "processed_recordings": 1,
+            "skipped_recordings": 1,
+            "resumed_recordings": 0,
+            "failures": [
+                {
+                    "path": "bad.edf",
+                    "error_type": "ValueError",
+                    "error": "malformed header",
+                }
+            ],
+        }
 
-        def add_all(self, windows: Iterable[object]) -> None:
-            list(windows)
+        return HarmonizationSummary(
+            output_dir=str(output_dir),
+            manifest_path=str(output_dir / "manifest.parquet"),
+            examples=100,
+            shards=1,
+            datasets=["shu-mi"],
+            source_formats=["edf"],
+            split_examples={"train": 100},
+            total_signal_bytes=128,
+            source_audit=audit,
+        )
 
-        def close(self) -> HarmonizationSummary:
-            manifest_path = self.output_dir / "manifest.parquet"
-            manifest_path.touch()
-            return HarmonizationSummary(
-                output_dir=str(self.output_dir),
-                manifest_path=str(manifest_path),
-                examples=1,
-                shards=1,
-                datasets=["shu-mi"],
-                source_formats=["edf"],
-                split_examples={"train": 1},
-                total_signal_bytes=128,
-            )
-
-    monkeypatch.setattr(pipeline, "SHUEdfReader", FakeReader)
-    monkeypatch.setattr(pipeline, "ArrowShardWriter", FakeWriter)
-
-    output_dir = tmp_path / "output"
-    summary = pipeline.harmonize_shu_edf(
-        tmp_path / "edf",
-        output_dir,
-        skip_invalid_recordings=True,
+    monkeypatch.setattr(
+        pipeline,
+        "SHUEdfReader",
+        FakeReader,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "harmonize_recordings",
+        fake_harmonize_recordings,
     )
 
-    assert created["strict"] is False
+    edf_root = tmp_path / "edf"
+    events_root = tmp_path / "events"
+    output_dir = tmp_path / "output"
+
+    summary = pipeline.harmonize_shu_edf(
+        edf_root,
+        output_dir,
+        events_root=events_root,
+        target_sampling_rate_hz=200,
+        num_workers=3,
+        skip_invalid_recordings=True,
+        show_progress=False,
+    )
+
+    # Individual worker readers remain strict. The shared coordinator decides
+    # whether recording-level failures abort or are recorded and skipped.
+    assert captured["reader_strict"] is True
+
+    assert captured["source_kind"] == "shu-edf"
+    assert captured["source_paths"] == [
+        edf_root / "sub-001_ses-01_task_motorimagery_eeg.edf",
+        edf_root / "sub-002_ses-01_task_motorimagery_eeg.edf",
+    ]
+    assert captured["dataset_root"] == edf_root
+    assert captured["output_dir"] == output_dir
+    assert captured["num_workers"] == 3
+    assert captured["skip_invalid_recordings"] is True
+    assert captured["show_progress"] is False
+
+    reader_options = captured["reader_options"]
+    assert reader_options["events_root"] == str(events_root)
+    assert reader_options["target_sampling_rate_hz"] == 200
+
     assert summary.source_audit is not None
     assert summary.source_audit["skipped_recordings"] == 1
-
-    source_audit = json.loads((output_dir / "source_audit.json").read_text())
-    assert source_audit["failures"][0]["path"] == "bad.edf"
-
-    persisted_summary = json.loads((output_dir / "summary.json").read_text())
-    assert persisted_summary["source_audit"]["skipped_recordings"] == 1
-    assert persisted_summary["source_audit"]["report_path"].endswith(
-        "source_audit.json"
-    )
+    assert summary.source_audit["failures"][0]["path"] == "bad.edf"

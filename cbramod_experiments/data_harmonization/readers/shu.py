@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, cast
@@ -96,6 +97,23 @@ class SHUMatReader:
         files = sorted(root_path.rglob("*_eeg.mat"))
         if not files:
             files = sorted(root_path.rglob("*.mat"))
+
+        recordings: dict[tuple[int, int], list[Path]] = defaultdict(list)
+        for path in files:
+            recordings[
+                (parse_subject_id(path.name), parse_session_id(path.name))
+            ].append(path)
+        duplicates = {key: paths for key, paths in recordings.items() if len(paths) > 1}
+        if duplicates:
+            details = "\n".join(
+                f"subject={subject}, session={session}:\n"
+                + "\n".join(f"  - {path}" for path in paths)
+                for (subject, session), paths in sorted(duplicates.items())
+            )
+            raise ValueError(
+                "Multiple SHU-MI MAT files represent the same subject/session:\n"
+                f"{details}"
+            )
         return files
 
     def iter_windows(

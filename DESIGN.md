@@ -31,13 +31,13 @@ The main principles are:
 │   ├── datasets/                   # validated SHU-MI HDF5 path
 │   ├── models/                     # CBraMod and EEGSimpleConv
 │   ├── utils/                      # config, training, metrics, reproduction, comparison
-│   └── data_harmonization/         # canonical schemas, readers, transforms, Arrow backend
+│   └── data_harmonization/         # schemas, readers, transforms, parallel engine, Arrow backends
 ├── tests/
 ├── notebooks/
 ├── reports/
 │   ├── part1.md
 │   └── part2.md
-└── resources/shu-mi_dataset/       # one real MAT/EDF/event sample plus metadata
+└── resources/data/                 # local SHU-MI/HBN fixtures or user-provided subsets
 ```
 
 ## 3. Command-line interface
@@ -51,8 +51,9 @@ The main principles are:
 - `check-checkpoint`: download or validate the released CBraMod checkpoint;
 - `benchmark`: measure parameter count, latency, throughput, and memory;
 - `compare`: combine CBraMod and EEGSimpleConv metrics/benchmarks;
-- `harmonize-shu`: materialize SHU-MI MAT or EDF/event data as Parquet plus Arrow;
-- `harmonize-bids`: materialize a BIDS-like EDF/BDF/SET subset;
+- `harmonize-shu`: materialize SHU-MI MAT or EDF/event data through the shared size-bundled parallel engine;
+- `harmonize-bids`: materialize a BIDS-like SET/EDF/BDF subset through the same engine;
+- `benchmark-streaming`: measure sequential iterable Arrow throughput;
 - `inspect-harmonized`: summarize and optionally audit a harmonized manifest;
 - `compare-backends`: verify HDF5/Arrow sample parity;
 - `smoke`: execute CPU-friendly model and metric checks.
@@ -149,7 +150,44 @@ The reader normalizes channel types and excludes known non-EEG channels where me
 
 Stable deterministic operations are materialized offline. Stochastic augmentation belongs in the training path and is intentionally not baked into stored examples.
 
-### 5.4 Parquet manifest and Arrow shards
+### 5.4 Shared size-bundled parallel engine
+
+`data_harmonization/parallel.py` provides one orchestration implementation for SHU-MI MAT, SHU-MI EDF/event, and BIDS recordings. The unit of work is a deterministic bundle of recordings sized from source-byte estimates.
+
+```text
+source-specific discovery
+        -> size-estimated recording bundles
+        -> spawn-based worker processes
+        -> worker-local Arrow shards + manifest fragments
+        -> deterministic coordinator merge
+        -> final manifest, shards, audit, and summary
+```
+
+Important properties:
+
+- workers never write shared Arrow files; each owns a private bundle directory and keeps one writer open across many recordings;
+- workers return only small result metadata, not large NumPy arrays;
+- the coordinator/rank-0 process alone renders the `tqdm` progress bar;
+- `spawn` is used instead of `fork`, avoiding inherited threaded-library state;
+- results are merged in discovery order, so output is deterministic even when jobs finish out of order;
+- BIDS recording identities preserve run/acquisition entities, preventing distinct recordings from producing the same window IDs;
+- duplicate `sample_id` values and incompatible manifest schemas are rejected before any shard is published;
+- strict mode writes an audit and aborts publication when any recording fails;
+- lenient mode skips invalid recordings and records path, error type, and message;
+- completed worker jobs are marked with `_SUCCESS.json`; interrupted strict runs retain `_work/` and can continue with `--resume`;
+- success markers include a source/configuration fingerprint, so changed input files or preprocessing options invalidate stale worker output;
+- finalization is a two-pass operation: first validate all fragments and build a shard plan, then publish;
+- worker shards are moved with `shutil.move` into `_publishing_shards/` rather than copied, avoiding a second full corpus write when paths share a filesystem;
+- `_publishing_shards/` is renamed to `shards/` only after every move succeeds; failed publication rolls shards back to their worker directories;
+- a durable `_PUBLICATION_PLAN.json` maps final shard names to worker sources, allowing resume mode to recover an interrupted publication even after the coordinator process exits;
+- manifest and summary files are written through temporary paths and atomically replaced;
+- after successful publication, `_work/` is removed.
+
+`num_workers=1` uses the same bundle-local/merge architecture serially. This makes serial-versus-parallel parity testable and avoids maintaining two code paths.
+
+The coordinator writes end-to-end timing information to `summary.json`: processing, merge, and total wall time together with recordings/examples/signal MiB per second.
+
+### 5.5 Parquet manifest and Arrow shards
 
 The harmonized layout is:
 
@@ -157,6 +195,7 @@ The harmonized layout is:
 output_dir/
 ├── manifest.parquet
 ├── summary.json
+├── source_audit.json
 └── shards/
     ├── shard-00000.arrow
     └── ...
@@ -166,16 +205,19 @@ The manifest contains searchable metadata, including sample identity, dataset, s
 
 Dense float32 signals are stored in compressed Arrow IPC record batches. This avoids one-file-per-example overhead and supports sequential/memory-mapped reads. Batch and shard sizes are configurable through the Makefile.
 
-### 5.5 Arrow training backend
+### 5.6 Arrow training backends
 
-`data_harmonization/datamodule.py` presents the same training interface as HDF5. A block-aware sampler shuffles record batches and then rows within each batch, preserving stochasticity without repeatedly decompressing unrelated batches.
+`data_harmonization/datamodule.py` presents the same training interface as HDF5 and supports two Arrow modes:
+
+- `arrow`: random access with record-batch-aware shuffling and a small decompressed-batch cache;
+- `arrow_streaming`: iterable shard streaming with rank/worker partitioning, shard shuffling, and bounded-buffer example shuffling.
 
 Both models receive `[channels, time]` from storage. Model-specific reshaping happens inside the model adapter:
 
 - CBraMod: `[32, 800] -> [32, 4, 200]`;
 - EEGSimpleConv: retains `[32, 800]` and resamples internally as configured by the architecture.
 
-### 5.6 Backend parity
+### 5.7 Backend parity
 
 `data_harmonization/parity.py` compares HDF5 and Arrow by split and index, including:
 
@@ -273,7 +315,14 @@ The aggregate includes every run, mean, sample/population variability as applica
 - throughput;
 - peak CUDA memory when available.
 
-`utils/compare.py` combines five-seed summaries and architecture benchmarks into JSON and Markdown under `reports/task_c/`.
+`utils/data_benchmark.py` contains two complementary data-path benchmarks:
+
+- `benchmark_streaming_dataset`: bounded-batch Arrow streaming measurement for quick tuning;
+- `benchmark_dataloader_epoch`: one complete epoch through `EEGDataModule`, supporting `hdf5`, `arrow`, and `arrow_streaming`.
+
+The full-epoch result records dataset/loader construction time, iterator startup, first-batch latency, total epoch time, observed versus expected examples, batches, payload bytes, examples/s, and signal MiB/s. Optional host-to-device transfer is included when a CUDA device is selected. The benchmark deliberately excludes model computation so data delivery can be measured independently.
+
+`utils/compare.py` combines five-seed summaries and architecture benchmarks into JSON and Markdown under `outputs/results_models_comparison/`.
 
 ## 8. Tests
 
@@ -305,7 +354,8 @@ The suite covers the following groups.
 - one complete train/validation/test cycle;
 - checkpoint selection and histories;
 - multi-seed aggregation;
-- benchmark output;
+- model benchmark output;
+- complete dataloader-epoch accounting and JSON output;
 - final model-comparison report generation.
 
 ### Harmonization and storage
@@ -318,12 +368,22 @@ The suite covers the following groups.
 - training through the Arrow backend;
 - BIDS filename/sidecar discovery;
 - EDF materialization;
-- SHU-MI MAT versus EDF/event equivalence.
+- SHU-MI MAT versus EDF/event equivalence;
+- serial-versus-parallel manifest and tensor equivalence;
+- worker failure auditing in strict and lenient modes;
+- interrupted-run resume behavior;
+- BIDS run-aware sample identity;
+- duplicate-ID rejection before shard publication;
+- move-based shard publication without `copy2`;
+- rollback and resumability after a simulated publication failure;
+- duplicate sample-ID protection;
+- coordinator-only progress behavior by construction.
 
 Run:
 
 ```bash
 make test
+make test-integration
 make test-verbose
 make check
 ```
@@ -360,11 +420,13 @@ make check
 
 | Target | Purpose |
 |---|---|
-| `harmonize-shu` | Build Parquet/Arrow from SHU-MI MAT. |
-| `harmonize-shu-edf` | Build Parquet/Arrow from SHU-MI EDF plus events. Set `SKIP_INVALID=1` to log malformed recordings and continue. |
-| `harmonize-hbn` | Build Parquet/Arrow from an HBN/BIDS EDF/BDF/SET subset. |
+| `harmonize-shu` | Parallel SHU-MI MAT harmonization with a coordinator/rank-0 progress bar. |
+| `harmonize-shu-edf` | Parallel EDF/event harmonization; malformed recordings are skipped/audited by default. |
+| `harmonize-hbn` | Parallel HBN/BIDS harmonization using whichever supported SET/EDF/BDF files are present. |
 | `inspect-harmonized` | Summarize a manifest; strict mode can enforce the SHU protocol. |
 | `compare-backends` | Verify numerical and metadata parity between HDF5 and Arrow. |
+| `benchmark-streaming` | Measure a bounded number of iterable Arrow batches. |
+| `benchmark-dataloader` | Measure one complete epoch through HDF5, random-access Arrow, or streaming Arrow. |
 | `sample-harmonize` | Build Arrow from the bundled MAT sample. |
 | `sample-harmonize-edf` | Build Arrow from the bundled EDF/event sample. |
 | `sample-compare-backends` | Run bundled HDF5/Arrow parity validation. |
@@ -391,7 +453,9 @@ make check
 | Target | Purpose |
 |---|---|
 | `explore-data` | Open the SHU-MI exploration notebook in JupyterLab. |
-| `render-data-notebook` | Execute the notebook and export HTML. |
+| `render-data-notebook` | Execute the SHU-MI exploration notebook and export HTML. |
+| `explore-dataloader` | Open the harmonized dataloader benchmark notebook. |
+| `render-dataloader-notebook` | Execute the full-epoch dataloader notebook and export HTML. |
 | `clean` | Remove caches, builds, and generated experiment outputs. |
 | `clean-data` | Remove generated processed/harmonized data while preserving raw data. |
 | `distclean` | Run cleanup and remove `.venv`. |
@@ -400,18 +464,30 @@ make check
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RAW_DIR` | `data/raw/shu` | SHU-MI MAT root. |
-| `DATASET` | `data/processed/shu_mi.h5` | HDF5 path or Arrow manifest, depending on backend. |
-| `DATA_BACKEND` | `hdf5` | `hdf5` or `arrow`. |
+| `RAW_DIR` | `resources/data/shu-mi/mat_files` | One authoritative SHU-MI MAT root. |
+| `DATASET` | `outputs/data/preprocessed/shu-mi/shu_mi.h5` | HDF5 path or Arrow manifest, depending on backend. |
+| `DATA_BACKEND` | `hdf5` | `hdf5`, `arrow`, or `arrow_streaming`. |
+| `DATALOADER_DATA` | harmonized SHU manifest | Dataset path used by the full-epoch benchmark. |
+| `DATALOADER_BACKEND` | `arrow_streaming` | Backend measured by `benchmark-dataloader`. |
+| `DATALOADER_NUM_WORKERS` | `8` | Dataloader workers used for the epoch benchmark. |
+| `DATALOADER_PREFETCH_FACTOR` | `4` | Batches prefetched per worker. |
 | `CHECKPOINT` | empty | Optional local CBraMod checkpoint. |
-| `OUTPUT_DIR` | `outputs/cbramod_shu_mi` | CBraMod run root. |
+| `OUTPUT_DIR` | `outputs` | Common generated-output root. |
 | `SIMPLECONV_OUTPUT_DIR` | `outputs/eegsimpleconv_shu_mi` | EEGSimpleConv run root. |
 | `REPRO_SEEDS` | `3407 3408 3409 3410 3411` | Multi-seed list. |
 | `STRICT` | `1` | Enforce complete SHU protocol where supported. |
-| `OVERWRITE` | `0` | Permit replacing generated data. |
-| `HBN_ROOT` | `data/raw/hbn_subset` | HBN/BIDS subset root. |
-| `HBN_LIMIT_RECORDINGS` | `3` | Maximum BIDS recordings in the POC. |
-| `HBN_TARGET_RATE` | `200` | Optional HBN target sample rate. |
+| `OVERWRITE` | `0` | Remove an existing harmonized output and rebuild. |
+| `RESUME` | `0` | Reuse completed worker jobs from an interrupted harmonization run. |
+| `HARMONIZE_WORKERS` | `4` | Worker processes operating on deterministic size-balanced recording bundles. |
+| `SHU_TARGET_JOB_GIB` | `0.25` | Approximate SHU source GiB per bundle. |
+| `HBN_TARGET_JOB_GIB` | `8` | Approximate HBN source GiB per bundle. |
+| `HARMONIZE_MAX_RECORDINGS_PER_JOB` | `128` | Maximum recordings in one bundle. |
+| `HARMONIZE_PROGRESS` | `1` | Enable coordinator/rank-0 `tqdm` progress. |
+| `SHU_EDF_SKIP_INVALID` | `1` | Skip and audit malformed optional EDF/event recordings. |
+| `HBN_SKIP_INVALID` | `1` | Skip and audit malformed heterogeneous BIDS recordings. |
+| `HBN_ROOT` | `resources/data/hbn` | HBN/BIDS subset root. |
+| `HBN_LIMIT_RECORDINGS` | empty | Optional maximum number of BIDS recordings. |
+| `HBN_TARGET_RATE` | `auto` | Preserve native rate unless a numeric target is supplied. |
 | `HBN_WINDOW_SECONDS` | `4` | HBN window duration. |
 | `HBN_STRIDE_SECONDS` | `4` | HBN window stride. |
 | `ARROW_RECORDS_PER_BATCH` | `256` | Rows per Arrow record batch. |
@@ -432,9 +508,11 @@ Every reported seed stores:
 Harmonized datasets store:
 
 - the manifest and shard layout;
-- preprocessing summary;
+- preprocessing summary and end-to-end timing;
+- source audit with processed/skipped/resumed recordings;
 - dataset/source identity;
-- sample-level provenance and preprocessing version.
+- sample-level provenance and preprocessing version;
+- deterministic shard/manifest locations.
 
 This allows a result to be traced back to the exact dataset representation, code/configuration, seed, and model artifact.
 
@@ -443,7 +521,7 @@ This allows a result to be traced back to the exact dataset representation, code
 - The public CBraMod repository is not a versioned snapshot of the exact paper environment; dependency and RNG differences can affect five-seed means.
 - The HBN implementation is a focused prototype, not a complete implementation of every BIDS inheritance rule.
 - HBN examples are unlabeled in this project and are not mixed with SHU-MI supervised metrics.
-- Spatial interpolation to a universal montage, advanced artifact rejection, distributed preprocessing, object-store caching, and Kafka orchestration are production extensions rather than take-home requirements.
+- Spatial interpolation to a universal montage, advanced artifact rejection, multi-node orchestration, object-store caching, and Kafka integration remain production extensions. Local bundle-level multiprocessing is implemented.
 - The Arrow backend demonstrates local sharded loading; it does not claim a measured 1 GB/s distributed throughput target.
 
 ## 12. Third-party sources

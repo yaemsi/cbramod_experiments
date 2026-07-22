@@ -112,14 +112,49 @@ Every output should be traceable to:
 
 ### Parallelization
 
-The natural work unit is a subject/session/task recording. These tasks are mostly independent and can be scheduled with Ray, Spark, Kubernetes jobs, Slurm, or a cloud batch service.
+The implemented prototype uses one shared bundle-parallel engine for SHU-MI MAT, SHU-MI EDF/event, and HBN/BIDS inputs. A source-specific reader discovers recordings, then a deterministic first-fit-decreasing planner groups them by estimated source bytes. EEGLAB estimates include sibling `.fdt` payloads. Each worker keeps one writer open across its bundle, allowing large shards to span many recordings while orchestration, failure handling, progress reporting, publication, and manifest merging remain common.
 
-A production task should be:
+```text
+source-specific discovery
+        -> deterministic size-estimated recording bundles
+        -> spawn-based worker processes
+        -> worker-local Arrow shards and Parquet fragment
+        -> coordinator/rank-0 deterministic merge
+        -> final manifest, source audit, summary, and shards
+```
 
-- idempotent;
-- independently retryable;
-- written to a temporary destination before atomic publication;
-- accompanied by a manifest fragment and status record.
+This design is intentionally different from both a shared writer and one shard per recording:
+
+- Arrow writers are process-local, avoiding corruption and lock contention;
+- each writer remains open across many recordings, packing record batches efficiently across recording boundaries;
+- large EEG arrays are written by the worker rather than serialized back to the parent;
+- only small job results cross process boundaries;
+- the coordinator is the only process that writes final shared metadata;
+- the coordinator alone owns the `tqdm` progress bar, so worker output does not overlap;
+- native BLAS/FFT thread pools are constrained in the Makefile to avoid worker × thread oversubscription.
+
+The same engine runs with `num_workers=1`, making serial and parallel output directly comparable. Final merge order follows discovery order rather than completion order, so the manifest and shard naming are deterministic.
+
+Each worker writes under `_work/job-XXXXXX/` and creates a success marker only after its shard and fragment are complete. The marker includes a source/configuration fingerprint, so resume mode does not reuse output after an input file or preprocessing option changes. On success, the coordinator:
+
+1. validates equal schemas;
+2. rejects duplicate sample IDs;
+3. builds the complete rewritten shard-path plan without modifying files;
+4. stages the final Parquet manifest;
+5. moves worker shards with `shutil.move` into `_publishing_shards/` (normally a same-filesystem rename rather than a second corpus copy);
+6. atomically renames `_publishing_shards/` to `shards/`;
+7. atomically publishes `manifest.parquet` and `summary.json`;
+8. removes `_work/`.
+
+If strict mode encounters invalid recordings, no final manifest is published and `_work/` is retained for diagnosis. If final shard publication fails, already moved shards are returned to their worker directories, leaving no partial `shards/` namespace and preserving resume capability. Before moving, rank 0 writes `_PUBLICATION_PLAN.json`; resume mode uses this durable mapping to recover staged or finalized shards after an abrupt coordinator interruption. An interrupted run can reuse completed jobs with `--resume`; `--overwrite` instead starts from a clean output and is mutually exclusive with resume. Lenient mode skips invalid recordings, records path/type/message, and publishes the remaining valid corpus.
+
+Although futures complete per bundle, the rank-0 progress bar advances by the number of recordings attempted and reports current example and skipped-recording counts. For example:
+
+```text
+Harmonizing bids:  47%|███████████▎            | 47/100 [08:31<09:18, examples=28413, skipped=2]
+```
+
+Bundle fingerprints include every source path, size, modification time, and preprocessing setting, so resume reuses only compatible completed bundles. This local process-pool implementation maps naturally to Ray, Slurm, Kubernetes jobs, or cloud batch execution because the worker contract is already bundle-local and produces independent artifacts.
 
 ### Offline and online transforms
 
@@ -268,50 +303,157 @@ Track:
 
 ## 7. Implemented prototype
 
-### SHU-MI full path
+### Shared execution engine
 
-The entire SHU-MI MAT corpus can be converted to the canonical Arrow/Parquet representation and used directly by CBraMod or EEGSimpleConv.
+All source types use `harmonize_recordings` from `data_harmonization/parallel.py`. Public wrappers perform source discovery and supply reader-specific options:
+
+- `harmonize_shu_mat`;
+- `harmonize_shu_edf`;
+- `harmonize_bids`.
+
+The CLI exposes `--num-workers`, `--skip-invalid-recordings`, `--resume`, `--overwrite`, and `--no-progress`. The Makefile defaults to four workers and a rank-0 progress bar.
+
+Every completed output has:
+
+```text
+output_dir/
+├── manifest.parquet
+├── summary.json
+├── source_audit.json
+└── shards/
+    ├── shard-00000.arrow
+    └── ...
+```
+
+`summary.json` records total/processing/merge time plus recordings, examples, and signal MiB per second. `source_audit.json` records discovered, processed, skipped, and resumed recordings.
+
+### SHU-MI full MAT path
+
+The complete SHU-MI MAT corpus is harmonized in parallel and remains directly usable by CBraMod or EEGSimpleConv:
 
 ```bash
-make harmonize-shu RAW_DIR=/path/to/shu/mat_files OVERWRITE=1
-make compare-backends DATASET=data/processed/shu_mi.h5
-make train-cbramod DATASET=data/harmonized/shu_mi/manifest.parquet DATA_BACKEND=arrow
+make harmonize-shu \
+  RAW_DIR=/path/to/one/authoritative/shu/mat_tree \
+  HARMONIZE_WORKERS=4 \
+  OVERWRITE=1
+
+make inspect-harmonized
+make compare-backends
 ```
+
+The reader rejects duplicate subject/session source files before processing, preventing accidentally extracted duplicate trees from doubling the corpus. The Arrow audit then verifies 11,988 unique examples and the paper subject split.
 
 ### SHU-MI EDF/event validation
 
-A separate reader reconstructs trials from continuous EDF plus event TSV. On the bundled real session:
+The optional EDF reader reconstructs trials from continuous recordings and event TSV files through the same engine:
 
-- MAT and EDF/event paths both produce `[100, 32, 1000]` raw trial tensors;
-- labels are identical;
-- signal correlation exceeds 0.999999 after unit alignment;
-- HDF5 and Arrow processed signals match exactly.
+```bash
+make harmonize-shu-edf HARMONIZE_WORKERS=4 OVERWRITE=1
+```
 
-This validates that the generalized continuous-recording path produces the same examples used by the paper-oriented MAT path.
+Some distributed EDF/event files are malformed. The Makefile therefore enables lenient mode for this optional path by default; failures remain visible in `source_audit.json`. Reported CBraMod and EEGSimpleConv results continue to use the MAT files.
+
+On valid matching recordings, MAT and EDF/event paths produce identical labels, aligned trial shapes, correlation above 0.999999, and differences consistent with EDF quantization.
 
 ### HBN/BIDS subset path
 
-The BIDS reader supports EDF, BDF, and SET/FDT files plus local sidecars. A small subset can be harmonized with:
+The BIDS reader discovers the supported files actually present rather than requiring BDF specifically. It supports EEGLAB SET/FDT, EDF, and BDF together with recording/task sidecars. Continuous signals are resampled optionally, windowed, and written through the same worker/merge engine. The BIDS recording stem, including entities such as `run` and `acq`, is retained in the canonical `recording_id`; this prevents separate runs of the same subject/task from colliding during final sample-ID validation.
 
 ```bash
 make harmonize-hbn \
   HBN_ROOT=/path/to/hbn_subset \
-  HBN_LIMIT_RECORDINGS=3 \
+  HBN_LIMIT_RECORDINGS=10 \
+  HBN_WINDOW_SECONDS=4 \
+  HBN_STRIDE_SECONDS=4 \
+  HARMONIZE_WORKERS=4 \
   OVERWRITE=1
 ```
 
-HBN windows are kept unlabeled and separate from SHU-MI metrics. Their purpose is to prove that the same canonical schema, transforms, writer, manifest, and PyTorch backend handle another source with different channels, sampling rates, tasks, and metadata.
+HBN windows are unlabeled in this prototype and remain separate from SHU-MI motor-imagery metrics. Their role is to validate heterogeneous ingestion, montage metadata, continuous windowing, and scalable materialization.
+
+### Training and streaming
+
+The final Parquet/Arrow dataset supports two training access modes:
+
+- random-access Arrow with record-batch-aware shuffling;
+- iterable Arrow streaming with rank/worker shard partitioning and bounded-buffer shuffling.
+
+```bash
+make train-cbramod \
+  DATASET=outputs/data/harmonized/shu_mi/manifest.parquet \
+  DATA_BACKEND=arrow_streaming
+
+make benchmark-streaming \
+  STREAM_MANIFEST=outputs/data/harmonized/hbn/manifest.parquet
+```
+
+For an end-to-end data-only measurement, the project also iterates one complete epoch through the same `EEGDataModule` used by training:
+
+```bash
+make benchmark-dataloader \
+  DATALOADER_DATA=outputs/data/harmonized/shu_mi/manifest.parquet \
+  DATALOADER_BACKEND=arrow_streaming \
+  DATALOADER_NUM_WORKERS=4
+```
+
+This verifies that every selected example is visited exactly once and records first-batch latency, full-epoch wall time, examples/s, and uncompressed signal MiB/s. The interactive notebook [`../notebooks/harmonized_dataloader_benchmark.ipynb`](../notebooks/harmonized_dataloader_benchmark.ipynb) shows the first batch, manifest view, full result, and an optional worker-count sweep. The benchmark excludes model compute; its purpose is to determine whether storage, decoding, collation, or host-to-device transfer can keep up with the training system.
 
 ### Prototype tests
 
-The tests verify:
+The tests cover:
 
 - canonical schema validation;
-- BIDS file and sidecar discovery;
-- EDF materialization;
-- MAT/EDF event reconstruction equivalence;
-- Arrow write/read round trips;
-- worker-safe loading;
-- block-aware shuffling;
-- exact HDF5/Arrow signal and metadata parity;
-- one complete training cycle through Arrow.
+- MAT, EDF/event, and BIDS reader behavior;
+- Arrow write/read and streaming paths;
+- exact HDF5/Arrow parity;
+- MAT/EDF reconstruction equivalence;
+- serial-versus-parallel manifest and tensor equivalence;
+- deterministic final ordering;
+- strict failure without partial publication;
+- lenient failure auditing;
+- resume from completed worker directories;
+- BIDS run-aware sample identities;
+- duplicate-ID detection before publication;
+- move-based publication and rollback after simulated failure;
+- duplicate sample-ID rejection;
+- one complete training cycle through Arrow;
+- full-epoch dataloader accounting for random-access and streaming Arrow.
+
+## 8. Questions to raise during the debrief
+
+### Scientific
+
+- How should source referencing schemes be reconciled?
+- What unit and filtering history can be trusted from each dataset?
+- Should the foundation model preserve native montages or require a canonical spatial representation?
+- How should continuous, event-driven, clinical, and cognitive tasks share objectives?
+- How do we prevent the model from learning dataset/site identity rather than neurophysiology?
+
+### Data quality and bias
+
+- What thresholds define unusable channels or recordings?
+- How should quality influence sampling rather than simple exclusion?
+- Are demographics, devices, sites, and clinical populations balanced?
+- How are duplicated or near-duplicated recordings detected?
+
+### Operations
+
+- How is schema evolution handled without invalidating old checkpoints?
+- How are preprocessing failures resumed safely?
+- How are corrupt shards quarantined and rebuilt?
+- How is the exact dataset manifest associated with every checkpoint?
+- What cache size and shard size maximize real cluster throughput?
+
+### Governance
+
+- Which licenses permit commercial foundation-model training?
+- How are consent withdrawals and deletion requests propagated?
+- Which metadata must be removed or access-controlled?
+
+## 9. Debrief summary
+
+> I would retain the original SHU-MI and HBN files as immutable, versioned sources and implement dataset-specific readers that convert MAT, EDF, BDF, or SET data and BIDS sidecars into a canonical EEG recording schema. Deterministic processing—unit and channel normalization, filtering, resampling, quality control, and windowing—would run as a versioned, restartable pipeline partitioned by recording. Metadata and locations would be stored in Parquet, while dense fixed windows would be materialized in large Arrow or WebDataset-style shards.
+>
+> Training ranks would receive non-overlapping shuffled shards, prefetch them from object storage into node-local NVMe, decode with persistent workers, and overlap pinned-memory GPU transfer with computation. Kafka can announce new recordings and trigger preprocessing, but object storage plus sharded datasets should serve repeated training epochs. The primary scientific risks are montage/reference differences, data quality, subject leakage, dataset imbalance, and governance.
+>
+> The submitted prototype exercises this architecture end to end. One size-bundled parallel engine serves SHU-MI MAT, SHU-MI EDF/event, and HBN/BIDS sources. Spawned workers keep private Arrow writers open across deterministic recording bundles and manifest fragments; the coordinator/rank-0 process displays progress, validates and merges outputs deterministically, and records failures and timing. Full SHU-MI feeds both training pipelines through the harmonized backend, the EDF/event path validates continuous ingestion against MAT, and a small HBN/BIDS subset uses the same canonical schema without being mixed into supervised SHU-MI metrics.

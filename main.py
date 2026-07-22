@@ -8,6 +8,11 @@ from typing import Any
 
 import torch
 
+from cbramod_experiments.utils.data_benchmark import (
+    benchmark_dataloader_epoch,
+    benchmark_streaming_dataset,
+)
+
 from cbramod_experiments.datasets import audit_shu_h5, preprocess_shu
 from cbramod_experiments.data_harmonization import (
     EEGDataModule,
@@ -125,17 +130,9 @@ def build_parser() -> argparse.ArgumentParser:
     harmonize_shu_parser.add_argument(
         "--target-sampling-rate", type=_parse_sampling_rate, default=200.0
     )
-    harmonize_shu_parser.add_argument(
-        "--skip-invalid-recordings",
-        action="store_true",
-        help=(
-            "For EDF input, record unreadable/invalid recordings and continue "
-            "instead of aborting"
-        ),
-    )
     harmonize_shu_parser.add_argument("--records-per-batch", type=int, default=256)
     harmonize_shu_parser.add_argument("--batches-per-shard", type=int, default=16)
-    harmonize_shu_parser.add_argument("--overwrite", action="store_true")
+    _add_harmonization_arguments(harmonize_shu_parser)
 
     harmonize_bids_parser = subparsers.add_parser(
         "harmonize-bids",
@@ -157,7 +154,56 @@ def build_parser() -> argparse.ArgumentParser:
     harmonize_bids_parser.add_argument("--limit-recordings", type=int)
     harmonize_bids_parser.add_argument("--records-per-batch", type=int, default=256)
     harmonize_bids_parser.add_argument("--batches-per-shard", type=int, default=16)
-    harmonize_bids_parser.add_argument("--overwrite", action="store_true")
+    _add_harmonization_arguments(harmonize_bids_parser)
+
+    streaming_benchmark_parser = subparsers.add_parser(
+        "benchmark-streaming",
+        help="Benchmark sequential Arrow streaming throughput",
+    )
+    streaming_benchmark_parser.add_argument("--manifest", required=True)
+    streaming_benchmark_parser.add_argument("--output", required=True)
+    streaming_benchmark_parser.add_argument("--batch-size", type=int, default=64)
+    streaming_benchmark_parser.add_argument("--num-workers", type=int, default=8)
+    streaming_benchmark_parser.add_argument("--prefetch-factor", type=int, default=4)
+    streaming_benchmark_parser.add_argument("--warmup-batches", type=int, default=10)
+    streaming_benchmark_parser.add_argument("--max-batches", type=int, default=200)
+    streaming_benchmark_parser.add_argument(
+        "--shuffle-buffer-size", type=int, default=2048
+    )
+    streaming_benchmark_parser.add_argument("--device", default="cpu")
+
+    dataloader_benchmark_parser = subparsers.add_parser(
+        "benchmark-dataloader",
+        help="Measure one complete HDF5/Arrow dataloader epoch",
+    )
+    dataloader_benchmark_parser.add_argument("--data", required=True)
+    dataloader_benchmark_parser.add_argument(
+        "--backend",
+        choices=["hdf5", "arrow", "arrow_streaming"],
+        default="arrow_streaming",
+    )
+    dataloader_benchmark_parser.add_argument(
+        "--split", choices=["train", "val", "test"], default="train"
+    )
+    dataloader_benchmark_parser.add_argument("--output", required=True)
+    dataloader_benchmark_parser.add_argument("--batch-size", type=int, default=64)
+    dataloader_benchmark_parser.add_argument("--num-workers", type=int, default=8)
+    dataloader_benchmark_parser.add_argument("--prefetch-factor", type=int, default=4)
+    dataloader_benchmark_parser.add_argument(
+        "--shuffle-buffer-size", type=int, default=2048
+    )
+    dataloader_benchmark_parser.add_argument("--seed", type=int, default=0)
+    dataloader_benchmark_parser.add_argument("--epoch", type=int, default=0)
+    dataloader_benchmark_parser.add_argument("--device", default="cpu")
+    dataloader_benchmark_parser.add_argument(
+        "--pin-memory", action=argparse.BooleanOptionalAction, default=None
+    )
+    dataloader_benchmark_parser.add_argument(
+        "--persistent-workers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    dataloader_benchmark_parser.add_argument("--no-progress", action="store_true")
 
     inspect_harmonized_parser = subparsers.add_parser(
         "inspect-harmonized", help="Inspect a Parquet/Arrow harmonized dataset"
@@ -180,13 +226,53 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_harmonization_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=1,
+        help="Number of recording-level worker processes",
+    )
+    parser.add_argument(
+        "--target-job-gib",
+        type=float,
+        default=0.0,
+        help=(
+            "Approximate source bytes per worker bundle in GiB; "
+            "0 preserves one recording per job"
+        ),
+    )
+    parser.add_argument(
+        "--max-recordings-per-job",
+        type=int,
+        default=128,
+        help="Maximum recordings packed into one worker bundle",
+    )
+    parser.add_argument(
+        "--skip-invalid-recordings",
+        action="store_true",
+        help="Record invalid source recordings and continue instead of aborting",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse completed worker outputs from an interrupted harmonization run",
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable the coordinator/rank-0 tqdm progress bar",
+    )
+    parser.add_argument("--overwrite", action="store_true")
+
+
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--data")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--output-dir")
     parser.add_argument("--checkpoint-path")
-    parser.add_argument("--data-backend", choices=["hdf5", "arrow"])
+    parser.add_argument("--data-backend", choices=["hdf5", "arrow", "arrow_streaming"])
 
 
 def main() -> None:
@@ -224,7 +310,13 @@ def main() -> None:
                 target_sampling_rate_hz=args.target_sampling_rate,
                 records_per_batch=args.records_per_batch,
                 batches_per_shard=args.batches_per_shard,
+                num_workers=args.num_workers,
+                target_job_gib=args.target_job_gib,
+                max_recordings_per_job=args.max_recordings_per_job,
                 overwrite=args.overwrite,
+                resume=args.resume,
+                skip_invalid_recordings=args.skip_invalid_recordings,
+                show_progress=not args.no_progress,
             )
         else:
             summary = harmonize_shu_edf(
@@ -234,8 +326,13 @@ def main() -> None:
                 target_sampling_rate_hz=args.target_sampling_rate,
                 records_per_batch=args.records_per_batch,
                 batches_per_shard=args.batches_per_shard,
+                num_workers=args.num_workers,
+                target_job_gib=args.target_job_gib,
+                max_recordings_per_job=args.max_recordings_per_job,
                 overwrite=args.overwrite,
+                resume=args.resume,
                 skip_invalid_recordings=args.skip_invalid_recordings,
+                show_progress=not args.no_progress,
             )
         print(summary)
     elif args.command == "harmonize-bids":
@@ -254,9 +351,46 @@ def main() -> None:
             limit_recordings=args.limit_recordings,
             records_per_batch=args.records_per_batch,
             batches_per_shard=args.batches_per_shard,
+            num_workers=args.num_workers,
+            target_job_gib=args.target_job_gib,
+            max_recordings_per_job=args.max_recordings_per_job,
             overwrite=args.overwrite,
+            resume=args.resume,
+            skip_invalid_recordings=args.skip_invalid_recordings,
+            show_progress=not args.no_progress,
         )
         print(summary)
+    elif args.command == "benchmark-streaming":
+        result = benchmark_streaming_dataset(
+            args.manifest,
+            output_path=args.output,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            prefetch_factor=args.prefetch_factor,
+            warmup_batches=args.warmup_batches,
+            max_batches=args.max_batches,
+            shuffle_buffer_size=args.shuffle_buffer_size,
+            device=args.device,
+        )
+        print(result.to_dict())
+    elif args.command == "benchmark-dataloader":
+        result = benchmark_dataloader_epoch(
+            args.data,
+            backend=args.backend,
+            split=args.split,
+            output_path=args.output,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            prefetch_factor=args.prefetch_factor,
+            streaming_shuffle_buffer_size=args.shuffle_buffer_size,
+            seed=args.seed,
+            epoch=args.epoch,
+            device=args.device,
+            pin_memory=args.pin_memory,
+            persistent_workers=args.persistent_workers,
+            show_progress=not args.no_progress,
+        )
+        print(result.to_dict())
     elif args.command == "inspect-harmonized":
         summary = summarize_manifest(args.manifest)
         print(summary)
@@ -415,7 +549,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
 def _audit_training_data(path: str, backend: str, *, require_complete_protocol: bool):
     if backend == "hdf5":
         return audit_shu_h5(path, require_complete_protocol=require_complete_protocol)
-    if backend == "arrow":
+    if backend in {"arrow", "arrow_streaming"}:
         return audit_arrow_shu(
             path, require_complete_protocol=require_complete_protocol
         )

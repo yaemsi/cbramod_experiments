@@ -132,11 +132,19 @@ def sliding_windows(
     total_points = recording.signal.shape[1]
     for start in range(0, max(0, total_points - window_points + 1), stride_points):
         stop = start + window_points
-        sample_id = (
-            f"{recording.dataset_id}:{recording.subject_id}:"
-            f"{recording.session_id or 'none'}:{recording.task or 'none'}:"
-            f"sample-{start:09d}"
-        )
+
+        recording_id = recording.metadata.get("recording_id")
+
+        if isinstance(recording_id, str) and recording_id:
+            sample_id = f"{recording.dataset_id}:{recording_id}:sample-{start:09d}"
+        else:
+            # Fallback for non-BIDS sources that do not define recording_id.
+            sample_id = (
+                f"{recording.dataset_id}:{recording.subject_id}:"
+                f"{recording.session_id or 'none'}:"
+                f"{recording.task or 'none'}:"
+                f"sample-{start:09d}"
+            )
         window = np.asarray(recording.signal[:, start:stop], dtype=np.float32)
         result = EEGWindow(
             signal=window,

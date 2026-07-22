@@ -208,6 +208,24 @@ class StreamingArrowEEGDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]
             random.Random(self.seed + self.epoch).shuffle(shards)
         return tuple(shards[global_worker_id::global_worker_count])
 
+    def assigned_example_count(self) -> int:
+        """Return the exact examples assigned to the current distributed rank.
+
+        DataLoader workers partition this rank's shards further, but their union
+        remains the same rank-level example set.
+        """
+
+        rank, world_size = self._distributed_context()
+        shards = list(self._shards)
+        if self.shuffle_shards:
+            random.Random(self.seed + self.epoch).shuffle(shards)
+        assigned = shards[rank::world_size]
+        return sum(
+            len(rows)
+            for shard in assigned
+            for rows in self._rows_by_shard[shard].values()
+        )
+
     def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
         rank, world_size = self._distributed_context()
         worker = get_worker_info()
