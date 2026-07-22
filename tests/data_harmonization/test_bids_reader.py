@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
+
+from pathlib import Path
 
 from cbramod_experiments.data_harmonization import BIDSReader, harmonize_bids
 from cbramod_experiments.data_harmonization.storage import ArrowEEGDataset
 from cbramod_experiments.data_harmonization.readers import parse_bids_entities
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RESOURCE_ROOT = PROJECT_ROOT / "resources" / "data" / "shu-mi_dataset"
 
 
 def test_parse_bids_entities() -> None:
@@ -23,13 +27,8 @@ def test_parse_bids_entities() -> None:
 @pytest.mark.integration
 def test_generic_bids_reader_supports_edf_and_arrow_materialization(
     tmp_path: Path,
-    shu_single_session_root: Path,
 ) -> None:
-    source = (
-        shu_single_session_root
-        / "edf_files"
-        / "sub-001_ses-01_task_motorimagery_eeg.edf"
-    )
+    source = RESOURCE_ROOT / "edf_files" / "sub-001_ses-01_task_motorimagery_eeg.edf"
     bids_root = tmp_path / "bids"
     eeg_dir = bids_root / "sub-001" / "ses-01" / "eeg"
     eeg_dir.mkdir(parents=True)

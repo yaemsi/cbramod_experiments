@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pyarrow.parquet as pq
+import shutil
 import torch
 
 from cbramod_experiments.data_harmonization import (
@@ -17,15 +18,34 @@ from cbramod_experiments.data_harmonization import (
 from cbramod_experiments.datasets import preprocess_shu
 
 
-def test_shu_mat_arrow_roundtrip_and_hdf5_parity(
-    tmp_path: Path,
-    synthetic_shu_mat_root: Path,
-) -> None:
-    raw_dir = synthetic_shu_mat_root / "mat_files"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RESOURCE_ROOT = PROJECT_ROOT / "resources" / "data" / "shu-mi_dataset"
+
+SAMPLE_MAT = RESOURCE_ROOT / "mat_files" / "sub-001_ses-01_task_motorimagery_eeg.mat"
+
+
+def _single_session_mat_dir(tmp_path: Path) -> Path:
+    if not SAMPLE_MAT.is_file():
+        raise FileNotFoundError(f"Missing test fixture: {SAMPLE_MAT}")
+
+    raw_dir = tmp_path / "mat_sample"
+    raw_dir.mkdir()
+
+    shutil.copy2(SAMPLE_MAT, raw_dir / SAMPLE_MAT.name)
+    return raw_dir
+
+
+def test_shu_mat_arrow_roundtrip_and_hdf5_parity(tmp_path: Path) -> None:
+    raw_dir = _single_session_mat_dir(tmp_path)
     hdf5_path = tmp_path / "shu.h5"
     arrow_dir = tmp_path / "shu_arrow"
 
-    preprocess_shu(raw_dir, hdf5_path, overwrite=True)
+    preprocess_shu(
+        raw_dir,
+        hdf5_path,
+        overwrite=True,
+    )
+
     summary = harmonize_shu_mat(
         raw_dir,
         arrow_dir,
@@ -61,13 +81,10 @@ def test_shu_mat_arrow_roundtrip_and_hdf5_parity(
     assert manifest[0]["channel_names"][0] == "Fp1"
 
 
-def test_arrow_data_module_returns_training_batches(
-    tmp_path: Path,
-    synthetic_shu_mat_root: Path,
-) -> None:
+def test_arrow_data_module_returns_training_batches(tmp_path: Path) -> None:
     output_dir = tmp_path / "shu_arrow"
     harmonize_shu_mat(
-        synthetic_shu_mat_root / "mat_files",
+        _single_session_mat_dir(tmp_path),
         output_dir,
         records_per_batch=32,
         overwrite=True,
@@ -87,13 +104,10 @@ def test_arrow_data_module_returns_training_batches(
     assert np.isfinite(signals.numpy()).all()
 
 
-def test_block_shuffle_sampler_visits_each_example_once(
-    tmp_path: Path,
-    synthetic_shu_mat_root: Path,
-) -> None:
+def test_block_shuffle_sampler_visits_each_example_once(tmp_path: Path) -> None:
     output_dir = tmp_path / "shu_arrow"
     harmonize_shu_mat(
-        synthetic_shu_mat_root / "mat_files",
+        RESOURCE_ROOT / "mat_files",
         output_dir,
         records_per_batch=10,
         batches_per_shard=2,

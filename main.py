@@ -37,6 +37,15 @@ from cbramod_experiments.utils import (
 )
 
 
+def _parse_sampling_rate(value: str) -> float | str:
+    if value.casefold() == "auto":
+        return "auto"
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("sampling rate must be positive or 'auto'")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CBraMod SHU-MI homework experiments")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -114,7 +123,15 @@ def build_parser() -> argparse.ArgumentParser:
     harmonize_shu_parser.add_argument("--source", choices=["mat", "edf"], default="mat")
     harmonize_shu_parser.add_argument("--events-root")
     harmonize_shu_parser.add_argument(
-        "--target-sampling-rate", type=float, default=200.0
+        "--target-sampling-rate", type=_parse_sampling_rate, default=200.0
+    )
+    harmonize_shu_parser.add_argument(
+        "--skip-invalid-recordings",
+        action="store_true",
+        help=(
+            "For EDF input, record unreadable/invalid recordings and continue "
+            "instead of aborting"
+        ),
     )
     harmonize_shu_parser.add_argument("--records-per-batch", type=int, default=256)
     harmonize_shu_parser.add_argument("--batches-per-shard", type=int, default=16)
@@ -218,6 +235,7 @@ def main() -> None:
                 records_per_batch=args.records_per_batch,
                 batches_per_shard=args.batches_per_shard,
                 overwrite=args.overwrite,
+                skip_invalid_recordings=args.skip_invalid_recordings,
             )
         print(summary)
     elif args.command == "harmonize-bids":

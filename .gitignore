@@ -206,6 +206,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Vscode
+.vscode/
+
 # PyPI configuration file
 .pypirc
 
@@ -217,9 +220,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Data, generated experiment data and outputs
+# Resources, generated experiment data and outputs
 resources/
 outputs/
-
-# Locally staged/generated datasets
-data/
+build/
+dist/

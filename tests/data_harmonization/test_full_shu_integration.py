@@ -13,13 +13,13 @@ def test_full_shu_manifest_matches_paper_protocol() -> None:
     """Validate the full corpus without rebuilding it during pytest."""
     manifest = Path(
         os.environ.get(
-            "SHU_MI_MANIFEST",
-            "resources/data/harmonized/shu_mi/manifest.parquet",
+            "HARMONIZED_SHU_MANIFEST",
+            "outputs/data/harmonized/shu_mi/manifest.parquet",
         )
     )
     if not manifest.exists():
         pytest.skip(
-            "Set SHU_MI_MANIFEST to an existing full harmonized SHU-MI manifest"
+            "Set HARMONIZED_SHU_MANIFEST to an existing full harmonized SHU-MI manifest"
         )
 
     audit = audit_arrow_shu(manifest, require_complete_protocol=True)

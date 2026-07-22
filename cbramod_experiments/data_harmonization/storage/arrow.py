@@ -66,6 +66,7 @@ class HarmonizationSummary:
     split_examples: dict[str, int]
     total_signal_bytes: int
     schema_version: str = CANONICAL_SCHEMA_VERSION
+    source_audit: dict[str, Any] | None = None
 
 
 class ArrowShardWriter:
