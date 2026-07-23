@@ -419,7 +419,272 @@ The tests cover:
 - one complete training cycle through Arrow;
 - full-epoch dataloader accounting for random-access and streaming Arrow.
 
-## 8. Questions to raise during the debrief
+## 8. Current limitations and next-step subject-aware layout
+
+The implemented prototype proves heterogeneous ingestion, parallel materialization,
+provenance, and full-epoch streaming. It should nevertheless be viewed as a
+working vertical slice rather than the final pretraining layout.
+
+### Measured local baseline
+
+On the harmonized HBN subset, the streaming loader consumed all 105,151
+four-second windows exactly once. These windows contain approximately 101 GiB of
+uncompressed float32 signal data. With batch size 128, four persistent workers,
+prefetch factor 2, CPU output, and no effective example-level shuffling, one
+complete epoch took approximately 1,238.7 seconds:
+
+```text
+examples/s:       84.9
+signal throughput: 83.5 MiB/s
+first batch:       [128, 129, 2000]
+complete epoch:    true
+```
+
+This is a useful correctness and local-throughput baseline, but remains well below
+a hypothetical 1 GB/s aggregate cluster target. It also reveals several areas
+where the current format and loader can be improved.
+
+### Limitations of the current design
+
+1. **Per-example decoding and collation**
+
+   The streaming reader currently reconstructs individual examples from Arrow
+   payloads and yields one tensor at a time. PyTorch's default collator then
+   allocates another tensor and copies those examples into a model batch. For a
+   129-channel, 2,000-sample float32 window, every example is close to 1 MiB, so
+   row-wise conversion and collation generate substantial Python overhead and
+   memory traffic.
+
+2. **Subject identity is preserved for provenance but not exposed as a typed
+   training column**
+
+   The manifest records `subject_id`, `recording_id`, task, run, and source URI,
+   but the common training interface primarily returns signal and label tensors.
+   This makes subject-level metrics, balanced subject sampling, and leak checks
+   less convenient at training time.
+
+3. **Bundle planning is based on estimated source bytes, not exact output
+   compatibility or output volume**
+
+   Source-file size is a practical proxy and prevents one shard per recording,
+   but files of similar size can produce different numbers of windows depending
+   on duration, sampling rate, channels, and preprocessing. The current planner
+   also does not make a formal compatibility key part of shard placement.
+
+4. **Heterogeneous shapes require explicit views**
+
+   A standard model batch can stack examples only when channel count, sample
+   count, dtype, and normally channel layout agree. A first HBN batch of
+   `[128, 129, 2000]` demonstrates one homogeneous view, but the general pipeline
+   must not assume that every future dataset or HBN release has the same montage,
+   rate, and duration.
+
+5. **The HBN throughput corpus has no experiment split**
+
+   `split=None` is appropriate for measuring one complete data pass, but not for
+   model selection. A real pretraining experiment should assign subjects to
+   train/validation/test or train/validation before materializing experiment
+   views. All recordings from one subject must remain in one split.
+
+6. **Sequential recording locality can produce correlated batches**
+
+   Keeping windows from one recording contiguous improves I/O, but a small
+   shuffle buffer can yield batches dominated by neighboring windows or one
+   participant. This may reduce gradient diversity and can affect models using
+   batch normalization.
+
+7. **Configured and effective shuffling can differ**
+
+   In the current loader, an unsplit `split=None` view defaults to deterministic
+   iteration unless shuffling is requested explicitly. Benchmark output should
+   therefore distinguish configured buffer size from the effective buffer used
+   by the dataset.
+
+### Proposed next-step storage and batching design
+
+The next iteration should retain subject and recording boundaries as metadata
+while physically mixing compatible recordings from many subjects into large,
+well-filled shards:
+
+```text
+subject A / recording 1 ─┐
+subject B / recording 1 ─┤
+subject C / recording 2 ─┼─> compatibility bucket
+subject A / recording 3 ─┘       ↓
+                           size-packed Arrow shards
+                                  ↓
+                      batched signal + metadata tensors
+```
+
+#### 1. Add compact typed identity columns
+
+Store compact categorical indices alongside each signal example:
+
+```text
+subject_index:   int32
+recording_index: int32
+task_index:      int16 or int32
+split_index:     int8
+```
+
+Keep the original pseudonymous strings and source provenance in Parquet lookup
+tables or the main manifest:
+
+```text
+subject_index -> subject_id
+recording_index -> recording_id, source_uri, task, run, acquisition
+```
+
+The subject index is intended for sampling, auditing, and evaluation. It should
+not normally be passed to the EEG backbone, because doing so can encourage
+participant memorization and does not generalize to unseen subjects.
+
+#### 2. Assign subject-level splits before shard planning
+
+For an actual HBN pretraining experiment, derive a deterministic split from
+`(dataset_id, subject_id, split_seed)` and enforce:
+
+```text
+(dataset_id, subject_id) -> exactly one split
+```
+
+All sessions, tasks, and runs from one participant remain together. The complete
+canonical corpus can remain unsplit, while lightweight Parquet experiment views
+assign train/validation/test without rewriting raw sources.
+
+#### 3. Bucket examples by tensor compatibility
+
+Before size packing, group recordings using a compatibility key such as:
+
+```python
+compatibility_key = (
+    split,
+    sampling_rate_hz,
+    num_channels,
+    num_samples,
+    signal_dtype,
+    channel_layout_id,
+)
+```
+
+`task` may also be included when task-specific loaders are important. Recordings
+from different subjects may share a shard only when their output examples are
+batch-compatible. Different shapes are written to separate shard groups or
+handled through an explicit padding-and-mask policy.
+
+#### 4. Pack multiple subjects and recordings into each shard
+
+A shard should not be tied to one subject. Subject-aligned shards tend to be
+small and uneven because participant recording volumes differ. Instead:
+
+- keep windows from one recording contiguous where practical;
+- allow many recordings and subjects in each 1–4 GiB shard;
+- avoid mixing experiment splits within a shard;
+- retain `subject_index`, `recording_index`, and source offsets for every row;
+- size-pack within each compatibility bucket using estimated output bytes.
+
+This preserves provenance while improving shard utilization, sequential I/O,
+shuffle quality, and load balancing across ranks.
+
+#### 5. Decode Arrow record batches into already-batched tensors
+
+The highest-value loader optimization is to replace row-wise decoding with a
+record-batch-oriented path:
+
+```text
+current:
+Arrow rows -> N Python objects -> N NumPy arrays -> N tensors
+           -> default collate -> [B, C, T]
+
+next step:
+Arrow RecordBatch -> contiguous NumPy [N, C, T]
+                  -> one torch.Tensor [N, C, T]
+                  -> batched metadata tensors [N]
+```
+
+The iterable dataset can then emit a structured pre-batched object and the
+PyTorch `DataLoader` can use `batch_size=None`:
+
+```python
+{
+    "signals": Tensor[B, C, T],
+    "labels": Tensor[B],
+    "subject_indices": Tensor[B],
+    "recording_indices": Tensor[B],
+    "channel_masks": Tensor[B, C],
+}
+```
+
+This removes one Python loop layer, many small allocations, and the default
+collation copy. Arrow record-batch size remains a storage/decode parameter and
+need not equal the optimizer batch size; a decoded record batch can be sliced
+into several model batches.
+
+#### 6. Add optional subject-aware batch construction
+
+For general pretraining, a useful sampling policy is to represent several
+participants in each model batch, for example:
+
+```text
+8 subjects x 8 windows per subject = batch size 64
+```
+
+Benefits include better subject balance, less dominance by long recordings, and
+more diverse batch-normalization statistics. The trade-offs are additional
+sampler complexity, potentially less sequential locality, and the need to avoid
+oversampling subjects with very little data. A bounded shuffle buffer remains a
+reasonable simpler baseline.
+
+### Benefits of the proposed design
+
+- processes all subjects through one common loader rather than one subject at a
+  time;
+- retains subject and recording boundaries without physically isolating them;
+- produces fewer, larger, shape-compatible shards;
+- supports subject-level metrics, leak checks, and balanced sampling;
+- improves rank/worker load balancing;
+- enables vectorized record-batch decoding and avoids an extra collation copy;
+- permits task-, montage-, and split-specific views without duplicating the
+  signal corpus.
+
+### Risks and trade-offs
+
+- compatibility bucketing can fragment a highly heterogeneous corpus into many
+  small groups;
+- storing metadata in every Arrow row duplicates some manifest information,
+  although compact integer indices keep the overhead small;
+- subject-aware batches may reduce sequential I/O and require a more complex
+  distributed sampler;
+- batches dominated by one subject or recording can produce correlated gradients
+  and unstable batch-normalization behavior;
+- subject identifiers require pseudonymization and controlled lookup tables;
+- feeding subject identity into the model would create a memorization risk and is
+  not part of the proposed default;
+- vectorized decoding may require changing the iterable-dataset contract and
+  carefully handling partial final record batches.
+
+### Acceptance tests for the next iteration
+
+The next design should be considered correct when:
+
+```text
+[ ] every subject belongs to exactly one experiment split
+[ ] every sample retains subject and recording provenance
+[ ] each shard contains only shape-compatible examples
+[ ] at least some shards contain multiple recordings and subjects
+[ ] sample IDs remain unique after multi-subject packing
+[ ] the streaming loader observes every selected example exactly once
+[ ] structured metadata tensors align with the signal batch
+[ ] serial and parallel harmonization remain logically equivalent
+[ ] row-batched decoding improves throughput without changing signals
+[ ] subject-aware sampling does not duplicate or omit examples unexpectedly
+```
+
+This next step keeps the current canonical representation and parallel
+materialization architecture, but improves the physical layout and loader path
+for genuine large-scale pretraining.
+
+## 9. Questions to raise during the debrief
 
 ### Scientific
 
@@ -450,10 +715,12 @@ The tests cover:
 - How are consent withdrawals and deletion requests propagated?
 - Which metadata must be removed or access-controlled?
 
-## 9. Debrief summary
+## 10. Debrief summary
 
 > I would retain the original SHU-MI and HBN files as immutable, versioned sources and implement dataset-specific readers that convert MAT, EDF, BDF, or SET data and BIDS sidecars into a canonical EEG recording schema. Deterministic processing—unit and channel normalization, filtering, resampling, quality control, and windowing—would run as a versioned, restartable pipeline partitioned by recording. Metadata and locations would be stored in Parquet, while dense fixed windows would be materialized in large Arrow or WebDataset-style shards.
 >
 > Training ranks would receive non-overlapping shuffled shards, prefetch them from object storage into node-local NVMe, decode with persistent workers, and overlap pinned-memory GPU transfer with computation. Kafka can announce new recordings and trigger preprocessing, but object storage plus sharded datasets should serve repeated training epochs. The primary scientific risks are montage/reference differences, data quality, subject leakage, dataset imbalance, and governance.
 >
 > The submitted prototype exercises this architecture end to end. One size-bundled parallel engine serves SHU-MI MAT, SHU-MI EDF/event, and HBN/BIDS sources. Spawned workers keep private Arrow writers open across deterministic recording bundles and manifest fragments; the coordinator/rank-0 process displays progress, validates and merges outputs deterministically, and records failures and timing. Full SHU-MI feeds both training pipelines through the harmonized backend, the EDF/event path validates continuous ingestion against MAT, and a small HBN/BIDS subset uses the same canonical schema without being mixed into supervised SHU-MI metrics.
+>
+> The next production-oriented iteration would add compact subject/recording columns, subject-level experiment splits, shape-compatibility buckets, multi-subject shard packing, and record-batch-to-tensor decoding so metadata and signals are batched together without processing each subject separately.
