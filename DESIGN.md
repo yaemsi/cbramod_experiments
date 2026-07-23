@@ -465,7 +465,7 @@ make check
 | Variable | Default | Meaning |
 |---|---|---|
 | `RAW_DIR` | `resources/data/shu-mi/mat_files` | One authoritative SHU-MI MAT root. |
-| `DATASET` | `outputs/data/preprocessed/shu-mi/shu_mi.h5` | HDF5 path or Arrow manifest, depending on backend. |
+| `SHU_DATASET` | `outputs/data/preprocessed/shu-mi/shu_mi.h5` | HDF5 path or Arrow manifest, depending on backend. |
 | `DATA_BACKEND` | `hdf5` | `hdf5`, `arrow`, or `arrow_streaming`. |
 | `DATALOADER_DATA` | harmonized SHU manifest | Dataset path used by the full-epoch benchmark. |
 | `DATALOADER_BACKEND` | `arrow_streaming` | Backend measured by `benchmark-dataloader`. |
