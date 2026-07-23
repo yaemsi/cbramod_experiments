@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Sequence, Sized
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Protocol, runtime_checkable
 
 import torch
 from torch.utils.data import DataLoader
@@ -12,6 +13,41 @@ from tqdm.auto import tqdm
 
 from ..data_harmonization.datamodule import DataBackend, EEGDataModule
 from ..data_harmonization.storage import StreamingArrowEEGDataset
+
+
+@runtime_checkable
+class SupportsSetEpoch(Protocol):
+    """Structural type for datasets and samplers with epoch-aware shuffling."""
+
+    def set_epoch(self, epoch: int) -> None:
+        """Set the current epoch used to derive deterministic shuffle state."""
+
+
+def _set_epoch_if_supported(obj: object | None, epoch: int) -> None:
+    """Call ``set_epoch`` when an object implements the expected protocol."""
+
+    if isinstance(obj, SupportsSetEpoch):
+        obj.set_epoch(epoch)
+
+
+def _expected_dataset_examples(dataset: object) -> int:
+    """Return the number of examples assigned to the current process.
+
+    Streaming datasets expose an explicit rank-aware count. Map-style datasets
+    are accepted through the standard ``Sized`` protocol. Keeping the checks in
+    this helper gives Pyright a sound narrowing before ``len`` is called.
+    """
+
+    if isinstance(dataset, StreamingArrowEEGDataset):
+        return int(dataset.assigned_example_count())
+
+    if isinstance(dataset, Sized):
+        return len(dataset)
+
+    raise TypeError(
+        "Cannot determine the expected number of examples for dataset type "
+        f"{type(dataset).__name__!r}"
+    )
 
 
 @dataclass(frozen=True)
@@ -169,7 +205,7 @@ def _synchronize(device: torch.device) -> None:
 class DataLoaderEpochBenchmarkResult:
     data_path: str
     backend: str
-    split: str
+    split: str | None
     device: str
     epoch: int
     batch_size: int
@@ -201,7 +237,7 @@ def benchmark_dataloader_epoch(
     data_path: str | Path,
     *,
     backend: DataBackend = "arrow_streaming",
-    split: str = "train",
+    split: str | None = "train",
     output_path: str | Path | None = None,
     batch_size: int = 64,
     num_workers: int = 8,
@@ -259,18 +295,12 @@ def benchmark_dataloader_epoch(
     loader = module.loader(split)
     loader_build_seconds = time.perf_counter() - build_start
 
-    dataset = loader.dataset
-    if hasattr(dataset, "set_epoch"):
-        dataset.set_epoch(epoch)
-    sampler = getattr(loader, "sampler", None)
-    if hasattr(sampler, "set_epoch"):
-        sampler.set_epoch(epoch)
+    dataset: object = loader.dataset
+    sampler: object | None = getattr(loader, "sampler", None)
+    _set_epoch_if_supported(dataset, epoch)
+    _set_epoch_if_supported(sampler, epoch)
 
-    expected_examples = (
-        dataset.assigned_example_count()
-        if isinstance(dataset, StreamingArrowEEGDataset)
-        else len(dataset)
-    )
+    expected_examples = _expected_dataset_examples(dataset)
     if expected_examples <= 0:
         raise RuntimeError("The selected dataloader view contains no examples")
 
