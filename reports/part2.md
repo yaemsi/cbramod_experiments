@@ -683,5 +683,3 @@ The next design should be considered correct when:
 This next step keeps the current canonical representation and parallel
 materialization architecture, but improves the physical layout and loader path
 for genuine large-scale pretraining.
-
-
