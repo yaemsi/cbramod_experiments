@@ -184,7 +184,7 @@ The reproduction is in the same performance range as the paper, but it is not an
 The most likely causes, in descending order, are:
 
 1. **seed sensitivity:** AUROC ranges from 0.6399 to 0.7031 and best epoch ranges from 1 to 26;
-2. **held-out-subject variability:** validation and test contain only five different subjects each, and the average validation-to-test drop is substantial;
+2. **held-out-subject variability:** Small held-out subject sets amplify seed and checkpoint-selection variability: validation and test each contain only five subjects, and the substantial validation-to-test drop shows that performance is sensitive to the identity of the held-out participants;
 3. **different RNG consumption:** explicitly seeded workers/samplers do not recreate the authors' exact sample order or dropout sequence for the same integer seed;
 4. **different PyTorch/CUDA kernels and versions:** Python 3.13 itself is unlikely to matter, but attention/matrix kernels, floating-point accumulation, and CUDA RNG implementations can;
 5. **repository snapshot ambiguity:** the current public repository is not a frozen, dependency-pinned artifact of the paper experiments;
