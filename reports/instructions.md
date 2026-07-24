@@ -62,8 +62,10 @@ configuration, sampling rate, and metadata richness. Your task is to design a pr
 The idea here is to give time to the candidate to allow her/him to prepare for the discussion during the debrief session.
 No specific output is expected for this exercise: no need for slides or text.
 ### Data Sources to Consider
+
 **Source A** CBraMod Format (SHU-MI dataset)
 *   Format: Preprocessed .mdb files
+
 **Source B** HBN Dataset (BIDS Format)
 *   Reference: https://neuromechanist.github.io/data/hbn/
 *   Format: BIDS-compliant (SET/BDF files)
@@ -71,6 +73,7 @@ No specific output is expected for this exercise: no need for slides or text.
 *   Sampling: 500Hz (raw), 100Hz (mini datasets)
 *   Channels: 128-channel EGI system
 *   Rich metadata
+
 ### Design Questions
 *   Data Architecture: How do you format data coming from both sources?
 *   Processing Pipeline: How do you preprocess several TB of data in a way that’s reproducible and scalable, in a reasonable amount of time?
